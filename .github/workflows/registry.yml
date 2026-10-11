@@ -56,7 +56,7 @@ jobs:
       contents: read
     env:
       GH_TOKEN: ${{ github.token }}
-      NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v5
@@ -79,7 +79,9 @@ jobs:
 
       # Without the NPM_TOKEN secret the packages are built and checked, but not published.
       - name: Publish to npm
-        if: env.NODE_AUTH_TOKEN != ''
+        if: env.NPM_TOKEN != ''
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           for folder in packages/anyfetch-* packages/anyfetch; do
             name=$(jq -r .name "$folder/package.json")
