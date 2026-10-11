@@ -64,6 +64,8 @@ args = ["mcp"]
 hermes mcp add fetchroam --command fetchroam --args mcp
 ```
 
+Hermes connects, lists the two tools and asks to enable them. Answer `Y`.
+
 **Pi**
 
 ```sh
