@@ -1,0 +1,4 @@
+# BoringSSL needs NASM to assemble its Windows crypto code.
+- name: Install NASM
+  if: runner.os == 'Windows'
+  uses: ilammy/setup-nasm@v1
