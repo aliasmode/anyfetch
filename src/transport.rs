@@ -81,10 +81,19 @@ pub(crate) async fn get(url: &str, accept: fn(&str) -> bool) -> Result<Body, Too
     attempt(url, accept, IDENTITIES[0]).await
 }
 
-/// Like `get`, but a refused page is requested once more as the second browser identity.
+/// Like `get`, but retries a refused page. Cloudflare's verdict on one identical request varies
+/// between attempts (measured: about two in three pass), so a Cloudflare challenge is tried again
+/// as the same identity. Any other refusal is tried once as the second browser identity.
 pub(crate) async fn get_page(url: &str, accept: fn(&str) -> bool) -> Result<Body, ToolError> {
-    match get(url, accept).await {
-        Err(error) if matches!(error.status, Some(401 | 403)) => {
+    let mut result = get(url, accept).await;
+    for _ in 0..2 {
+        if !matches!(&result, Err(error) if cloudflare_challenge(error)) {
+            break;
+        }
+        result = get(url, accept).await;
+    }
+    match result {
+        Err(error) if !cloudflare_challenge(&error) && matches!(error.status, Some(401 | 403)) => {
             match attempt(url, accept, IDENTITIES[1]).await {
                 Err(retry) if matches!(retry.code, "challenge_required" | "rate_limited") => {
                     Err(retry)
@@ -95,6 +104,10 @@ pub(crate) async fn get_page(url: &str, accept: fn(&str) -> bool) -> Result<Body
         }
         result => result,
     }
+}
+
+fn cloudflare_challenge(error: &ToolError) -> bool {
+    error.code == "challenge_required" && error.status == Some(403)
 }
 
 async fn attempt(

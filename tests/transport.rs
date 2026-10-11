@@ -232,6 +232,21 @@ async fn challenge_header_is_not_a_successful_fetch() {
 }
 
 #[tokio::test]
+async fn cloudflare_challenge_is_retried_twice_with_the_same_browser_identity() {
+    let challenge = "HTTP/1.1 403 Forbidden\r\ncf-mitigated: challenge\r\nContent-Type: text/html\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+    let page = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 5\r\nConnection: close\r\n\r\nhello";
+    let (url, worker) = serve(vec![challenge, challenge, page]);
+    assert_eq!(fetch(&url).await.unwrap().content, "hello");
+    let requests = worker.join().unwrap();
+    assert!(requests.iter().all(|r| r.contains("Version/26.4 Safari")));
+
+    let (url, worker) = serve(vec![challenge, challenge, challenge]);
+    let error = fetch(&url).await.unwrap_err();
+    assert_eq!(error.code, "challenge_required");
+    assert_eq!(worker.join().unwrap().len(), 3);
+}
+
+#[tokio::test]
 async fn refused_request_is_retried_once_with_the_second_browser_identity() {
     let page = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 5\r\nConnection: close\r\n\r\nhello";
     for refusal in ["401 Unauthorized", "403 Forbidden"] {

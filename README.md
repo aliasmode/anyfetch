@@ -13,7 +13,7 @@ Measured on 2026-10-11 from a cloud server, one request per site, no proxy. The 
 
 - **`web_search`** — DuckDuckGo results with no key, or your own SearXNG instance.
 - **`web_fetch`** — clean Markdown with links, tables and code blocks intact. Long pages can be read in parts.
-- **Browser-grade requests** — Safari's TLS, HTTP/2 and header fingerprint, and when a site refuses a fetch, one automatic retry under a second browser identity.
+- **Browser-grade requests** — Safari's TLS, HTTP/2 and header fingerprint. A refused fetch is retried automatically, as the same browser or as a second one.
 - **Anubis-aware** — completes Anubis proof-of-work checks, as a browser does.
 - **Lightweight** — a 12 MB Rust binary. No browser, no JavaScript engine, no Python, no Node.
 - **Works everywhere** — a stdio MCP server for agent harnesses, and a plain CLI for everything else.
