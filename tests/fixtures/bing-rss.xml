@@ -1,0 +1,68 @@
+<?xml version='1.0' encoding='utf-8'?>
+<rss version="2.0">
+  <channel>
+    <title>Bing: HTTP 429 Retry-After header RFC 6585 semantics</title>
+    <link>http://www.bing.com:80/search?q=HTTP+429+Retry-After+header+RFC+6585+semantics</link>
+    <description>Search results</description>
+    <item>
+      <title>RFC 6585: Additional HTTP Status Codes | RFC Editor</title>
+      <link>https://www.rfc-editor.org/info/rfc6585/</link>
+      <description>Introduction This document specifies additional HTTP [RFC2616] status codes for a variety of common situations, to improve interoperability and avoid confusion when other, less precise status codes are used. Note that these status codes are optional; servers cannot be required to support them.</description>
+      <pubDate>Sat, 10 Oct 2026 02:42:00 GMT</pubDate>
+    </item>
+    <item>
+      <title>Retry-After header - HTTP | MDN - MDN Web Docs</title>
+      <link>https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Retry-After</link>
+      <description>Retry-After header The HTTP Retry-After response header indicates how long the user agent should wait before making a follow-up request. There are three main cases this header is used: In a 503 Service Unavailable response, this indicates how long the service is expected to be unavailable. In a 429 Too Many Requests response, this indicates how long to wait before making a new request. In a ...</description>
+      <pubDate>Thu, 08 Oct 2026 06:55:00 GMT</pubDate>
+    </item>
+    <item>
+      <title>RFC 6585 - Additional HTTP Status Codes</title>
+      <link>https://httpwg.org/specs/rfc6585.html</link>
+      <description>4. 429 Too Many Requests The 429 status code indicates that the user has sent too many requests in a given amount of time ("rate limiting"). The response representations SHOULD include details explaining the condition, and MAY include a Retry-After header indicating how long to wait before making a new request. For example:</description>
+      <pubDate>Fri, 09 Oct 2026 07:01:00 GMT</pubDate>
+    </item>
+    <item>
+      <title>HTTP Rate Limiting Reference (429, Retry-After, RateLimit)</title>
+      <link>https://openllm.wavise.com/blog/http-rate-limiting-reference</link>
+      <description>Curated reference for HTTP rate limiting: 429 semantics, Retry-After forms, IETF RateLimit headers, and correct client backoff.</description>
+      <pubDate>Wed, 30 Sep 2026 09:42:00 GMT</pubDate>
+    </item>
+    <item>
+      <title>4. 429 Too Many Requests - RFCinfo</title>
+      <link>http://rfcinfo.com/rfc-6585/4-429-too-many-requests/</link>
+      <description>The response representations SHOULD include details explaining the condition, and MAY include a Retry-After header indicating how long to wait before making a new request.</description>
+      <pubDate>Wed, 02 Sep 2026 23:44:00 GMT</pubDate>
+    </item>
+    <item>
+      <title>429 Too Many Requests - HTTP | MDN - MDN Web Docs</title>
+      <link>https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Status/429</link>
+      <description>A Retry-After header may be included to this response to indicate how long a client should wait before making the request again. Implementations of rate limiting vary; restrictions may be server-wide or per resource.</description>
+      <pubDate>Fri, 09 Oct 2026 05:28:00 GMT</pubDate>
+    </item>
+    <item>
+      <title>REST API rate-limit headers: from X-RateLimit-* to the IETF standard</title>
+      <link>https://asoasis.tech/articles/2026-09-01-0853-rest-api-rate-limit-headers-standard/</link>
+      <description>When a client exceeds limits, servers typically respond with HTTP 429 Too Many Requests and may include Retry-After to indicate how long to wait before retrying; this status was standardized in RFC 6585, and Retry-After semantics are specified in HTTP Semantics.</description>
+      <pubDate>Sat, 10 Oct 2026 07:28:00 GMT</pubDate>
+    </item>
+    <item>
+      <title>REST API Throttling: Algorithms, Headers and Examples</title>
+      <link>https://restfulapi.net/rest-api-throttling/</link>
+      <description>When a client runs out, the API answers HTTP 429 (Too Many Requests) with a Retry-After header. When the whole service is overloaded, it answers HTTP 503 instead. Well-behaved clients then wait and retry with growing, randomized pauses.</description>
+      <pubDate>Sat, 03 Oct 2026 03:19:00 GMT</pubDate>
+    </item>
+    <item>
+      <title>HTTP Status 429 (Too Many Requests) - restfulapi.net</title>
+      <link>https://restfulapi.net/http-status-429-too-many-requests/</link>
+      <description>When to send HTTP 429 Too Many Requests, how it differs from 503 and 403, which headers to send, and how clients should wait and retry, with RFC 6585 and RFC 9110 references.</description>
+      <pubDate>Sat, 10 Oct 2026 14:24:00 GMT</pubDate>
+    </item>
+    <item>
+      <title>Using the Retry-After Header for 429 and 503 | API Contract</title>
+      <link>https://www.api-contract.com/error-contracts-resilience-mapping/retryable-vs-non-retryable-errors/using-the-retry-after-header-for-429-and-503/</link>
+      <description>The Retry-After response header field indicates how long the user agent ought to wait before making a follow-up request. It takes one of two forms: an HTTP-date (the absolute time after which the client may retry) or a non-negative decimal integer delay-seconds (the number of seconds to wait).</description>
+      <pubDate>Thu, 08 Oct 2026 17:25:00 GMT</pubDate>
+    </item>
+  </channel>
+</rss>
