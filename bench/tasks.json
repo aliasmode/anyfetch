@@ -1,0 +1,347 @@
+[
+  {
+    "id": "A1",
+    "question": "Read https://www.youtube.com/watch?v=SLV9AJxnb1U . In the video description's chapter list, at what timestamp does the chapter \"cargo build-dir layout v2\" start?",
+    "answer": "13:43",
+    "accept": [
+      "13:43"
+    ],
+    "source_url": "https://www.youtube.com/watch?v=SLV9AJxnb1U",
+    "evidence": "13:43 cargo build-dir layout v2",
+    "group": "blocked-site"
+  },
+  {
+    "id": "A2",
+    "question": "Read https://www.theatlantic.com/technology/2026/10/ai-hacking-cybersecurity-race/688911/ . Which senator questioned OpenAI's Jason Kwon about whether the government would still not know about the incident without voluntary disclosure?",
+    "answer": "Jonathon Duniam",
+    "accept": [
+      "Duniam"
+    ],
+    "source_url": "https://www.theatlantic.com/technology/2026/10/ai-hacking-cybersecurity-race/688911/",
+    "evidence": "“If you hadn’t voluntarily provided that information to government, we still wouldn’t know today?” Senator Jonathon Duniam",
+    "group": "blocked-site"
+  },
+  {
+    "id": "A3",
+    "question": "Read https://apnews.com/article/lebanon-flights-saudi-sudan-october-10-2026-a5f40b5e0ab08ae8128db5ed749114d8 . How many crew members did the United Arab Emirates' national guard rescue after the fire on an oil tanker in the Persian Gulf?",
+    "answer": "22",
+    "accept": [
+      "22 crew",
+      "22"
+    ],
+    "source_url": "https://apnews.com/article/lebanon-flights-saudi-sudan-october-10-2026-a5f40b5e0ab08ae8128db5ed749114d8",
+    "evidence": "The United Arab Emirates’ national guard rescued 22 crew members after a fire broke out aboard an oil tanker in the Persian Gulf",
+    "group": "blocked-site"
+  },
+  {
+    "id": "A4",
+    "question": "Read https://www.washingtonpost.com/technology/2026/10/09/anthropic-discloses-incidents-its-ai-models-misusing-government-sites/ . Anthropic said its AI agents submitted a false tip about a murder to the police hotline of which city?",
+    "answer": "Philadelphia",
+    "accept": [
+      "Philadelphia"
+    ],
+    "source_url": "https://www.washingtonpost.com/technology/2026/10/09/anthropic-discloses-incidents-its-ai-models-misusing-government-sites/",
+    "evidence": "including submitting a false tip about a murder to a Philadelphia",
+    "group": "blocked-site"
+  },
+  {
+    "id": "A5",
+    "question": "Read https://medium.com/rustaceans/rust-is-about-to-hit-1-100-and-it-still-wont-be-rust-2-0-f449c2462b11 . On roughly what date does the article say the next stable Rust version (1.100) lands?",
+    "answer": "November 12",
+    "accept": [
+      "November 12",
+      "Nov 12",
+      "12 November"
+    ],
+    "source_url": "https://medium.com/rustaceans/rust-is-about-to-hit-1-100-and-it-still-wont-be-rust-2-0-f449c2462b11",
+    "evidence": "If the release train keeps its usual schedule, the next stable version lands around November 12.",
+    "group": "blocked-site"
+  },
+  {
+    "id": "A6",
+    "question": "Read https://www.reddit.com/r/programming/comments/1x32log/software_developers_are_not_okay_bjarnason/ . The post links to a YouTube video. What is that video's ID (the value of the v= parameter)?",
+    "answer": "KsEpW03gxKg",
+    "accept": [
+      "KsEpW03gxKg"
+    ],
+    "source_url": "https://www.reddit.com/r/programming/comments/1x32log/software_developers_are_not_okay_bjarnason/",
+    "evidence": "https://www.youtube.com/watch?v=KsEpW03gxKg",
+    "group": "blocked-site"
+  },
+  {
+    "id": "A7",
+    "question": "Read https://www.investopedia.com/stock-market-today-dow-jones-s-and-p-500-09162026-12123817 . To what target range did the Federal Reserve lift interest rates according to this article?",
+    "answer": "3.75% to 4%",
+    "accept": [
+      "3.75% to 4%",
+      "3.75%-4%",
+      "3.75% - 4%",
+      "3.75 to 4"
+    ],
+    "source_url": "https://www.investopedia.com/stock-market-today-dow-jones-s-and-p-500-09162026-12123817",
+    "evidence": "the Fed elected to lift rates by a quarter-percentage point to a range of 3.75% to 4%",
+    "group": "blocked-site"
+  },
+  {
+    "id": "A8",
+    "question": "Read https://stackoverflow.com/questions/80001554/how-do-c26-hives-maintain-valid-iterators-when-their-underlying-items-are-eras . At what timestamp in the linked presentation does the speaker say std::hive iterators stay valid regardless of erasure/insertion?",
+    "answer": "35:15",
+    "accept": [
+      "35:15"
+    ],
+    "source_url": "https://stackoverflow.com/questions/80001554/how-do-c26-hives-maintain-valid-iterators-when-their-underlying-items-are-eras",
+    "evidence": "he makes an interesting assertion that the `std::hive` \"iterators stay valid regardless of erasure/insertion\" (at 35:15).",
+    "group": "blocked-site"
+  },
+  {
+    "id": "A9",
+    "question": "Read https://www.sciencedirect.com/org/journal/environmental-reviews/vol/34/suppl/C . Who is the second listed author of the article titled \"Plant community assembly on volcanic debris avalanche deposits around the world\"?",
+    "answer": "Virginia H. Dale",
+    "accept": [
+      "Virginia H. Dale",
+      "Virginia Dale"
+    ],
+    "source_url": "https://www.sciencedirect.com/org/journal/environmental-reviews/vol/34/suppl/C",
+    "evidence": "Plant community assembly on volcanic debris avalanche deposits around the world Review articleOpen access Elsie M. Denton, Virginia H. Dale",
+    "group": "blocked-site"
+  },
+  {
+    "id": "A10",
+    "question": "Read https://www.nytimes.com/wirecutter/reviews/best-new-picks-awards-methodology-2026/ . How many winners did Wirecutter's inaugural 2026 Best New Picks Awards have?",
+    "answer": "71",
+    "accept": [
+      "71"
+    ],
+    "source_url": "https://www.nytimes.com/wirecutter/reviews/best-new-picks-awards-methodology-2026/",
+    "evidence": "To arrive at the 71 winners of our 2026 Best New Picks Awards, our newsroom of more than 170 journalists first evaluated more than 10,000 products over the past year",
+    "group": "blocked-site"
+  },
+  {
+    "id": "B1",
+    "question": "Read https://blog.rust-lang.org/2026/10/02/demoting-i686-windows-targets-to-std-only/ . Which RFC number does the post cite for the i686-pc-windows-msvc demotion?",
+    "answer": "RFC 3999",
+    "accept": [
+      "3999"
+    ],
+    "source_url": "https://blog.rust-lang.org/2026/10/02/demoting-i686-windows-targets-to-std-only/",
+    "evidence": "see RFC 3999 for i686-pc-windows-msvc demotion, and MCP 1020 for i686-pc-windows-gnu demotion.",
+    "group": "open-site"
+  },
+  {
+    "id": "B2",
+    "question": "Read https://docs.python.org/3.15/whatsnew/3.15.html . What maximum sampling rate (in Hz) does the page say the Tachyon sampling profiler can achieve?",
+    "answer": "1,000,000 Hz",
+    "accept": [
+      "1,000,000",
+      "1000000"
+    ],
+    "source_url": "https://docs.python.org/3.15/whatsnew/3.15.html",
+    "evidence": "achieving sampling rates of up to 1,000,000 Hz, making it the fastest sampling profiler available for Python",
+    "group": "open-site"
+  },
+  {
+    "id": "B3",
+    "question": "Read https://kubernetes.io/blog/2026/10/05/scaling-kubernetes-workloads-with-node-swap/ . In the benchmark table, how many concurrent pods did the Python Sandbox (gVisor) workload reach with Local SSD swap?",
+    "answer": "240",
+    "accept": [
+      "240"
+    ],
+    "source_url": "https://kubernetes.io/blog/2026/10/05/scaling-kubernetes-workloads-with-node-swap/",
+    "evidence": "Python Sandbox (gVisor) 80 Concurrent Pods 240 Concurrent Pods +200% Pod Density",
+    "group": "open-site"
+  },
+  {
+    "id": "B4",
+    "question": "Read https://www.postgresql.org/about/news/postgresql-19-beta-4-released-3386/ . Which feature is the first one listed as reverted under \"Changes Since Beta 3\"?",
+    "answer": "SQL/PGQ (property graph query) support",
+    "accept": [
+      "SQL/PGQ",
+      "PGQ"
+    ],
+    "source_url": "https://www.postgresql.org/about/news/postgresql-19-beta-4-released-3386/",
+    "evidence": "Revert SQL/PGQ (property graph query) support.",
+    "group": "open-site"
+  },
+  {
+    "id": "B5",
+    "question": "Read https://nodejs.org/en/blog/release/v26.11.1 . Which GitHub handle is named in the version heading line of the release notes?",
+    "answer": "@aduh95",
+    "accept": [
+      "aduh95"
+    ],
+    "source_url": "https://nodejs.org/en/blog/release/v26.11.1",
+    "evidence": "2026-10-07, Version 26.11.1 (Current), @aduh95",
+    "group": "open-site"
+  },
+  {
+    "id": "B6",
+    "question": "Read https://github.com/astral-sh/uv/releases/tag/0.13.0 . Which pull request number is linked on the breaking change \"Prefer native Python on Windows ARM64\"?",
+    "answer": "#22100",
+    "accept": [
+      "22100"
+    ],
+    "source_url": "https://github.com/astral-sh/uv/releases/tag/0.13.0",
+    "evidence": "Prefer native Python on Windows ARM64 (#22100)",
+    "group": "open-site"
+  },
+  {
+    "id": "B7",
+    "question": "Read https://arxiv.org/abs/2610.03574 . How many manually authored and human-validated questions does the HyperBrowseComp benchmark comprise?",
+    "answer": "423",
+    "accept": [
+      "423"
+    ],
+    "source_url": "https://arxiv.org/abs/2610.03574",
+    "evidence": "a multilingual and multimodal browsing benchmark comprising 423 manually authored and human-validated questions across 13 languages",
+    "group": "open-site"
+  },
+  {
+    "id": "B8",
+    "question": "Read https://news.ycombinator.com/item?id=49969183 . Which user submitted this Hacker News thread?",
+    "answer": "Philpax",
+    "accept": [
+      "Philpax"
+    ],
+    "source_url": "https://news.ycombinator.com/item?id=49969183",
+    "evidence": "Beam: Reflection's 501B open-weight model ... by Philpax",
+    "group": "open-site"
+  },
+  {
+    "id": "B9",
+    "question": "Read https://en.wikipedia.org/wiki/2026_FIFA_World_Cup_final . What attendance does the infobox give for the match?",
+    "answer": "80,663",
+    "accept": [
+      "80,663",
+      "80663"
+    ],
+    "source_url": "https://en.wikipedia.org/wiki/2026_FIFA_World_Cup_final",
+    "evidence": "Attendance 80,663",
+    "group": "open-site"
+  },
+  {
+    "id": "B10",
+    "question": "Read https://developer.mozilla.org/en-US/docs/Mozilla/Firefox/Releases/156 . Which Firefox bug number is cited for the Inspector highlighter's viewport size readout no longer rounding the width and height?",
+    "answer": "2055445",
+    "accept": [
+      "2055445"
+    ],
+    "source_url": "https://developer.mozilla.org/en-US/docs/Mozilla/Firefox/Releases/156",
+    "evidence": "The viewport size readout in the Inspector's highlighter no longer rounds the width and height, which previously reported a misleading size at fractional zoom levels or on high-density displays. (Firefox bug 2055445)",
+    "group": "open-site"
+  },
+  {
+    "id": "C1",
+    "question": "In Cloudflare's launch changelog for its Web Search API (October 2026), which provider value does the REST API curl example use?",
+    "answer": "ceramic",
+    "accept": [
+      "ceramic"
+    ],
+    "source_url": "https://developers.cloudflare.com/changelog/post/2026-10-02-introducing-web-search-api/",
+    "evidence": "\"provider\": \"ceramic\",",
+    "group": "search-first"
+  },
+  {
+    "id": "C2",
+    "question": "Which new VecDeque method is stabilized in the Rust 1.99.0 release announcement?",
+    "answer": "VecDeque::retain_back",
+    "accept": [
+      "retain_back"
+    ],
+    "source_url": "https://blog.rust-lang.org/2026/10/01/Rust-1.99.0/",
+    "evidence": "VecDeque::retain_back",
+    "group": "search-first"
+  },
+  {
+    "id": "C3",
+    "question": "On what date was Go 1.27.0 released, according to the official Go release history? Give the date.",
+    "answer": "2026-08-19",
+    "accept": [
+      "2026-08-19",
+      "August 19"
+    ],
+    "source_url": "https://go.dev/doc/devel/release",
+    "evidence": "go1.27.0 (released 2026-08-19)",
+    "group": "search-first"
+  },
+  {
+    "id": "C4",
+    "question": "In the Django 6.1.2 release notes, language codes longer than how many characters are now rejected or truncated before the cached lookup in get_supported_language_variant()?",
+    "answer": "500",
+    "accept": [
+      "500"
+    ],
+    "source_url": "https://docs.djangoproject.com/en/6.1/releases/6.1.2/",
+    "evidence": "language codes longer than 500 characters are now rejected or truncated before the cached lookup.",
+    "group": "search-first"
+  },
+  {
+    "id": "C5",
+    "question": "Under what extension name does the pgx-bm25 1.0 PostgreSQL extension install, according to its release announcement on postgresql.org?",
+    "answer": "bm25_native",
+    "accept": [
+      "bm25_native"
+    ],
+    "source_url": "https://www.postgresql.org/about/news/pgx-bm25-10-bm25-ranked-full-text-search-as-a-native-postgresql-index-3396/",
+    "evidence": "It supports PostgreSQL 17 and 18, and installs as `bm25_native`.",
+    "group": "search-first"
+  },
+  {
+    "id": "C6",
+    "question": "A 2026 arXiv paper presents WebMRE, an offline benchmark derived from successful WebArena trajectories. How many tasks does the benchmark contain?",
+    "answer": "541",
+    "accept": [
+      "541"
+    ],
+    "source_url": "https://arxiv.org/abs/2609.27353",
+    "evidence": "We present WebMRE, an offline benchmark of 541 tasks and 5,293 steps derived from successful WebArena trajectories",
+    "group": "search-first"
+  },
+  {
+    "id": "C7",
+    "question": "On what date was Firefox 156 released, according to MDN's Firefox 156 release notes for developers?",
+    "answer": "September 15, 2026",
+    "accept": [
+      "September 15, 2026",
+      "2026-09-15",
+      "15 September 2026"
+    ],
+    "source_url": "https://developer.mozilla.org/en-US/docs/Mozilla/Firefox/Releases/156",
+    "evidence": "Firefox 156 was released on September 15, 2026.",
+    "group": "search-first"
+  },
+  {
+    "id": "C8",
+    "question": "In the PostgreSQL JDBC 42.7.14 security release announcement (October 2026), which GitHub Security Advisory ID is paired with CVE-2026-107314?",
+    "answer": "GHSA-rhp9-mr79-r74h",
+    "accept": [
+      "GHSA-rhp9-mr79-r74h"
+    ],
+    "source_url": "https://www.postgresql.org/about/news/2026-10-07-postgresql-jdbc-42714-security-update-for-multiple-cves-3399/",
+    "evidence": "CVE-2026-107314 and the GitHub Security Advisory GHSA-rhp9-mr79-r74h",
+    "group": "search-first"
+  },
+  {
+    "id": "C9",
+    "question": "According to the official Kubernetes releases page, what is the end-of-life date of Kubernetes 1.34?",
+    "answer": "2026-10-27",
+    "accept": [
+      "2026-10-27",
+      "October 27"
+    ],
+    "source_url": "https://kubernetes.io/releases/",
+    "evidence": "1.34 Latest Release: 1.34.12 (released: 2026-09-15) End of Life: 2026-10-27",
+    "group": "search-first"
+  },
+  {
+    "id": "C10",
+    "question": "On what date was Node.js 22.23.3 (LTS) released, according to the Node.js blog release notes? Give the date.",
+    "answer": "2026-09-23",
+    "accept": [
+      "2026-09-23",
+      "September 23"
+    ],
+    "source_url": "https://nodejs.org/en/blog/release/v22.23.3",
+    "evidence": "2026-09-23, Version 22.23.3 'Jod' (LTS), @aduh95",
+    "group": "search-first"
+  }
+]

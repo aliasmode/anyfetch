@@ -1,0 +1,121 @@
+id	group	tool	run	correct	answer	note
+A1	blocked-site	anyfetch	1	yes	13:43	YouTube description chapter list from anyfetch fetch.
+A1	blocked-site	anyfetch	2	yes	13:43	YouTube description chapter list.
+A1	blocked-site	builtin	1	no	UNKNOWN	WebFetch returned no description; search found no chapter list.
+A1	blocked-site	builtin	2	no	UNKNOWN	WebFetch returned only a truncated YouTube header; searches did not find the video description.
+A2	blocked-site	anyfetch	1	yes	Jonathon Duniam	Atlantic article text quotes Senator Jonathon Duniam.
+A2	blocked-site	anyfetch	2	yes	Jonathon Duniam	Atlantic article, Australian Senator Jonathon Duniam.
+A2	blocked-site	builtin	1	no	UNKNOWN	Atlantic page gave 403; searches did not confirm which senator asked this.
+A2	blocked-site	builtin	2	no	UNKNOWN	Atlantic page gave 403 and search results did not name the senator who asked that question.
+A3	blocked-site	anyfetch	1	yes	22	AP article says UAE national guard rescued 22 crew members.
+A3	blocked-site	anyfetch	2	yes	22	AP article section on UAE tanker rescue.
+A3	blocked-site	builtin	1	yes	22	AP page gave 403; search results (Reuters/AP syndications) say 22 crew rescued.
+A3	blocked-site	builtin	2	yes	22	AP page gave 403; search results from Reuters, WAM and others say 22 crew rescued.
+A4	blocked-site	anyfetch	1	yes	Philadelphia	WaPo article says false murder tip to Philadelphia police hotline.
+A4	blocked-site	anyfetch	2	yes	Philadelphia	Washington Post article lede.
+A4	blocked-site	builtin	1	yes	Philadelphia	WaPo page gave 403; search results on the same story say Philadelphia police.
+A4	blocked-site	builtin	2	yes	Philadelphia	WaPo page gave 403; search results (Reuters, CBC, 6abc) report the Philadelphia police website.
+A5	blocked-site	anyfetch	1	yes	November 12 (2026)	Medium article says next stable version lands around November 12.
+A5	blocked-site	anyfetch	2	yes	around November 12 (2026)	Medium article intro.
+A5	blocked-site	builtin	1	yes	About November 12, 2026	Medium page gave 403; search summary of the article gave around November 12.
+A5	blocked-site	builtin	2	yes	around November 12, 2026	Medium page gave 403; search summary of the article says about November 12.
+A6	blocked-site	anyfetch	1	yes	KsEpW03gxKg	The post's [link] points to youtube.com/watch?v=KsEpW03gxKg.
+A6	blocked-site	anyfetch	2	yes	KsEpW03gxKg	The post's [link] points to youtube.com/watch?v=KsEpW03gxKg.
+A6	blocked-site	builtin	1	no	UNKNOWN	Reddit fetch returned only 'Reddit'; search found an essay video KsEpW03gxKg but could not confirm the Reddit post links to it.
+A6	blocked-site	builtin	2	yes	KsEpW03gxKg	Reddit fetch returned only 'Reddit'; search shows Bjarnason's same-titled YouTube video is v=KsEpW03gxKg, not confirmed as the one linked in the post.
+A7	blocked-site	anyfetch	1	yes	3.75% to 4%	Investopedia article says the Fed lifted rates a quarter point to a range of 3.75% to 4%.
+A7	blocked-site	anyfetch	2	yes	3.75% to 4%	Investopedia article text says the Fed lifted rates to a range of 3.75% to 4%.
+A7	blocked-site	builtin	1	yes	3.75%-4%	Investopedia fetch gave 402; figure comes from search summary of CNBC/Schwab, not the Investopedia article itself.
+A7	blocked-site	builtin	2	no	UNKNOWN	Investopedia fetch gave HTTP 402; other outlets say 3.75%-4% but one says 3.50%-3.75%, so the article's own figure is unconfirmed.
+A8	blocked-site	anyfetch	1	yes	35:15	Question text says 'at 35:15' for the Marc Gregoire presentation.
+A8	blocked-site	anyfetch	2	yes	35:15	The question text says 'at 35:15' for the Marc Gregoire presentation.
+A8	blocked-site	builtin	1	no	UNKNOWN	Stack Overflow fetch gave 403 and search did not return the question or linked presentation.
+A8	blocked-site	builtin	2	no	UNKNOWN	Stack Overflow fetch gave HTTP 403 and search did not surface the question or the presentation timestamp.
+A9	blocked-site	anyfetch	1	yes	Virginia H. Dale	ScienceDirect issue page lists authors Elsie M. Denton, Virginia H. Dale.
+A9	blocked-site	anyfetch	2	yes	Virginia H. Dale	The issue listing shows authors Elsie M. Denton, Virginia H. Dale.
+A9	blocked-site	builtin	1	yes	Virginia H. Dale	ScienceDirect fetch gave 403; search summary listed authors Elsie M. Denton and Virginia H. Dale.
+A9	blocked-site	builtin	2	yes	Virginia H. Dale	ScienceDirect fetch gave 403; a web search summary named the authors as Elsie M. Denton and Virginia H. Dale.
+A10	blocked-site	anyfetch	1	yes	71	Wirecutter methodology page says 71 winners.
+A10	blocked-site	anyfetch	2	yes	71	Wirecutter methodology page says 71 winners.
+A10	blocked-site	builtin	1	yes	71	NYT fetch gave 403; search results (Wirecutter tweet, press coverage) say 71 products.
+A10	blocked-site	builtin	2	yes	71	NYT fetch gave 403; search results (Prism News, NYT press release listing) say 71 products.
+B1	open-site	anyfetch	1	yes	RFC 3999	Rust blog post text cites RFC 3999 for the i686-pc-windows-msvc demotion.
+B1	open-site	anyfetch	2	yes	RFC 3999	Rust blog post text cites RFC 3999 for the i686-pc-windows-msvc demotion.
+B1	open-site	builtin	1	yes	RFC 3999	WebFetch of the Rust blog post.
+B1	open-site	builtin	2	yes	RFC 3999	WebFetch of the Rust blog post.
+B2	open-site	anyfetch	1	yes	1,000,000 Hz	Python 3.15 whatsnew Tachyon section says up to 1,000,000 Hz.
+B2	open-site	anyfetch	2	yes	1,000,000 Hz	Python 3.15 whatsnew Tachyon section says up to 1,000,000 Hz.
+B2	open-site	builtin	1	yes	1,000,000 Hz	WebFetch of Python 3.15 whatsnew.
+B2	open-site	builtin	2	yes	1,000,000 Hz	WebFetch of the Python 3.15 whatsnew page.
+B3	open-site	anyfetch	1	yes	240	Kubernetes blog benchmark table shows 240 concurrent pods for Python Sandbox (gVisor) with Local SSD swap.
+B3	open-site	anyfetch	2	yes	240	Kubernetes blog benchmark table lists 240 concurrent pods for Python Sandbox (gVisor) with Local SSD swap.
+B3	open-site	builtin	1	yes	240	WebFetch of the Kubernetes blog, second call with offset 100000 to reach the table.
+B3	open-site	builtin	2	yes	240	WebFetch of the Kubernetes blog, second call at offset 100000.
+B4	open-site	anyfetch	1	yes	SQL/PGQ (property graph query) support	First revert bullet under Changes Since Beta 3 in the PostgreSQL announcement.
+B4	open-site	anyfetch	2	yes	SQL/PGQ (property graph query) support	First bullet under Changes Since Beta 3 in the PostgreSQL 19 Beta 4 announcement.
+B4	open-site	builtin	1	yes	SQL/PGQ (property graph query) support	WebFetch of the PostgreSQL 19 beta 4 news page.
+B4	open-site	builtin	2	yes	SQL/PGQ (property graph query) support	WebFetch of the PostgreSQL news page.
+B5	open-site	anyfetch	1	yes	@aduh95	Version heading in Node.js v26.11.1 release notes reads '2026-10-07, Version 26.11.1 (Current), @aduh95'.
+B5	open-site	anyfetch	2	yes	@aduh95	Version heading line of the Node.js v26.11.1 release notes.
+B5	open-site	builtin	1	yes	@aduh95	WebFetch of the Node.js v26.11.1 release page heading.
+B5	open-site	builtin	2	yes	@aduh95	WebFetch of the Node.js release page heading.
+B6	open-site	anyfetch	1	yes	22100	GitHub release page links PR #22100 on that breaking change.
+B6	open-site	anyfetch	2	yes	22100	Release page links #22100 on that breaking change.
+B6	open-site	builtin	1	yes	22100	WebFetch of the uv 0.13.0 release page.
+B6	open-site	builtin	2	yes	22100	WebFetch of the uv 0.13.0 release page.
+B7	open-site	anyfetch	1	yes	423	arXiv abstract says 423 manually authored and human-validated questions.
+B7	open-site	anyfetch	2	yes	423	arXiv abstract page.
+B7	open-site	builtin	1	yes	423	WebFetch of the arXiv abstract page.
+B7	open-site	builtin	2	yes	423	WebFetch of the arXiv abstract.
+B8	open-site	anyfetch	1	yes	Philpax	HN page lacked the submitter; the Algolia item API root author is Philpax.
+B8	open-site	anyfetch	2	yes	Philpax	Top-level author field in the HN Algolia item JSON; the HN page itself did not show the submitter.
+B8	open-site	builtin	1	yes	Philpax	WebFetch of the HN item page.
+B8	open-site	builtin	2	yes	Philpax	WebFetch of the HN thread page.
+B9	open-site	anyfetch	1	yes	80,663	Infobox attendance line on the Wikipedia page.
+B9	open-site	anyfetch	2	yes	80,663	Wikipedia infobox Attendance line.
+B9	open-site	builtin	1	yes	80,663	WebFetch of the Wikipedia page infobox.
+B9	open-site	builtin	2	yes	80,663	WebFetch of the Wikipedia infobox.
+B10	open-site	anyfetch	1	yes	2055445	MDN Firefox 156 notes cite Firefox bug 2055445.
+B10	open-site	anyfetch	2	yes	2055445	MDN Firefox 156 notes, Developer Tools section.
+B10	open-site	builtin	1	yes	2055445	WebFetch of the MDN Firefox 156 release notes.
+B10	open-site	builtin	2	yes	2055445	WebFetch of the MDN Firefox 156 release notes.
+C1	search-first	anyfetch	1	yes	ceramic	Cloudflare changelog curl example has "provider": "ceramic" (Worker example uses exa).
+C1	search-first	anyfetch	2	yes	ceramic	Cloudflare changelog 2026-10-02 curl example has "provider": "ceramic".
+C1	search-first	builtin	1	yes	ceramic	Cloudflare changelog page curl example shows "provider": "ceramic".
+C1	search-first	builtin	2	yes	ceramic	WebFetch of the Cloudflare changelog post showed "provider": "ceramic" in the curl example.
+C2	search-first	anyfetch	1	yes	VecDeque::retain_back	releases.rs 1.99.0 Stabilized APIs list.
+C2	search-first	anyfetch	2	yes	VecDeque::retain_back	Rust 1.99.0 blog Stabilized APIs list.
+C2	search-first	builtin	1	yes	VecDeque::retain_back	Rust 1.99.0 announcement Stabilized APIs list.
+C2	search-first	builtin	2	yes	VecDeque::retain_back	WebFetch of the Rust 1.99.0 blog post listed it under Stabilized APIs.
+C3	search-first	anyfetch	1	yes	2026-08-19	go.dev release history: go1.27.0 (released 2026-08-19).
+C3	search-first	anyfetch	2	yes	2026-08-19	go.dev release history: go1.27.0 (released 2026-08-19).
+C3	search-first	builtin	1	yes	2026-08-19 (August 19, 2026)	go.dev Release History page.
+C3	search-first	builtin	2	yes	August 19, 2026	WebFetch of go.dev/doc/devel/release.
+C4	search-first	anyfetch	1	yes	500	Django 6.1.2 release notes, CVE-2026-77050 section.
+C4	search-first	anyfetch	2	yes	500	Django 6.1.2 release notes, CVE-2026-77050 section.
+C4	search-first	builtin	1	yes	500	Django 6.1.2 release notes, CVE-2026-77050 item.
+C4	search-first	builtin	2	yes	500	WebFetch of the Django 6.1.2 release notes.
+C5	search-first	anyfetch	1	yes	bm25_native	postgresql.org news post for pgx-bm25 1.0.
+C5	search-first	anyfetch	2	yes	bm25_native	postgresql.org news post: installs as bm25_native.
+C5	search-first	builtin	1	yes	bm25_native	postgresql.org announcement says it installs as bm25_native.
+C5	search-first	builtin	2	yes	bm25_native	WebSearch summary of the postgresql.org announcement said it installs as bm25_native; the page itself was not fetched.
+C6	search-first	anyfetch	1	yes	541	arXiv 2609.27353 abstract: 541 tasks and 5,293 steps.
+C6	search-first	anyfetch	2	yes	541 tasks	arXiv 2609.27353 abstract.
+C6	search-first	builtin	1	yes	541 tasks	WebSearch summary of arXiv 2609.27353.
+C6	search-first	builtin	2	yes	541	WebSearch summary of arXiv 2609.27353.
+C7	search-first	anyfetch	1	yes	September 15, 2026	MDN Firefox 156 release notes description.
+C7	search-first	anyfetch	2	yes	September 15, 2026	MDN Firefox 156 release notes description.
+C7	search-first	builtin	1	yes	September 15, 2026	WebFetch of MDN Firefox 156 release notes.
+C7	search-first	builtin	2	yes	September 15, 2026	WebFetch of MDN Firefox 156 release notes.
+C8	search-first	anyfetch	1	yes	GHSA-rhp9-mr79-r74h	postgresql.org news post for JDBC 42.7.14.
+C8	search-first	anyfetch	2	yes	GHSA-rhp9-mr79-r74h	postgresql.org news announcement 2026-10-07.
+C8	search-first	builtin	1	yes	GHSA-rhp9-mr79-r74h	WebSearch result summarizing the postgresql.org announcement.
+C8	search-first	builtin	2	yes	GHSA-rhp9-mr79-r74h	WebSearch summary of the PostgreSQL announcement.
+C9	search-first	anyfetch	1	yes	2026-10-27	kubernetes.io/releases 1.34 End of Life field.
+C9	search-first	anyfetch	2	yes	2026-10-27	kubernetes.io/releases 1.34 End of Life.
+C9	search-first	builtin	1	yes	2026-10-27	WebFetch of kubernetes.io/releases.
+C9	search-first	builtin	2	yes	2026-10-27	WebFetch of kubernetes.io/releases.
+C10	search-first	anyfetch	1	yes	2026-09-23	Node.js blog release v22.23.3 heading.
+C10	search-first	anyfetch	2	yes	2026-09-23	Node.js blog release heading for v22.23.3.
+C10	search-first	builtin	1	yes	September 23, 2026	WebFetch of Node.js blog release v22.23.3.
+C10	search-first	builtin	2	yes	2026-09-23	WebFetch of Node.js blog v22.23.3.
