@@ -1,0 +1,97 @@
+https://www.nytimes.com/	not read	HTTP 403
+https://www.bbc.com/news	read	OK; BBC News; ~900 words
+https://www.bloomberg.com/	not read	HTTP 403
+https://www.usatoday.com/	not read	HTTP 402
+https://www.cnn.com/	not read	HTTP 451
+https://www.washingtonpost.com/	not read	HTTP 403
+https://www.theguardian.com/international	not read	HTTP 403
+https://www.theatlantic.com/	not read	HTTP 403
+https://apnews.com/	not read	HTTP 403
+https://www.nbcnews.com/	read	OK; NBC News; ~1500 words
+https://www.cnbc.com/	not read	HTTP 403
+https://www.npr.org/	not read	tool error: timeout, 2 attempts
+https://www.ft.com/	not read	HTTP 403
+https://www.forbes.com/	read	OK; Forbes; ~900 words
+https://www.businessinsider.com/	read	OK; Business Insider; ~250 words
+https://www.latimes.com/	read	OK; Los Angeles Times; ~1500 words
+https://www.newsweek.com/	read	OK; Newsweek; ~1000 words
+https://www.vox.com/	not read	HTTP 403
+https://people.com/	not read	HTTP 402
+https://www.lemonde.fr/	read	OK; Le Monde; ~1500 words
+https://www.lefigaro.fr/	read	OK; Le Figaro; ~4000 words
+https://www.dailymail.co.uk/home/index.html	not read	HTTP 403
+https://www.telegraph.co.uk/	not read	HTTP 402
+https://news.sky.com/	not read	HTTP 403
+https://nypost.com/	read	OK; New York Post; ~2000 words
+https://www.wsj.com/	not read	HTTP 401
+https://abcnews.go.com/	read	301 to abcnews.com; OK; ~1000 words
+https://www.buzzfeed.com/	read	OK; BuzzFeed; ~220 words
+https://www.huffpost.com/	read	OK; HuffPost; ~800 words
+https://thehill.com/	not read	HTTP 403
+https://www.reuters.com/	not read	HTTP 401
+https://www.economist.com/	not read	HTTP 403
+https://www.wired.com/	read	OK; WIRED; ~900 words
+https://arstechnica.com/	read	OK; Ars Technica; ~800 words
+https://www.theverge.com/	not read	HTTP 403
+https://techcrunch.com/	read	OK; TechCrunch; ~1000 words
+https://www.cnet.com/	read	OK; CNET; ~1800 words
+https://www.zdnet.com/	read	OK; ZDNET; ~600 words
+https://mashable.com/	not read	HTTP 403
+https://www.instagram.com/instagram/	not read	thin: OK but ~70 words
+https://x.com/elonmusk	not read	HTTP 402
+https://www.tiktok.com/@tiktok	not read	blocked: empty shell
+https://www.pinterest.com/pinterest/	not read	blocked: empty shell
+https://www.linkedin.com/company/anthropicresearch/	read	OK; Anthropic LinkedIn; ~1700 words
+https://www.tumblr.com/explore/trending	not read	blocked: empty navigation shell
+https://medium.com/tag/technology	not read	HTTP 403
+https://www.quora.com/What-is-web-scraping	not read	HTTP 403
+https://www.reddit.com/r/technology/	not read	blocked: empty shell
+https://vimeo.com/watch	not read	blocked: navigation-only shell
+https://www.flickr.com/explore	not read	thin: OK but ~10 words
+https://unsplash.com/	read	OK; Unsplash; ~350 words
+https://www.pexels.com/	read	OK; Pexels; ~350 words
+https://www.behance.net/	not read	HTTP 403
+https://bandcamp.com/	not read	blocked: client challenge
+https://www.patreon.com/	read	OK; Patreon; ~400 words
+https://www.slideshare.net/	read	OK; SlideShare; ~850 words
+https://starwars.fandom.com/wiki/Luke_Skywalker	not read	HTTP 402
+https://www.ted.com/talks	not read	blocked: navigation-only shell
+https://www.figma.com/	read	OK; Figma; ~250 words
+https://www.rollingstone.com/	not read	307 to tollbit.rollingstone.com; then HTTP 402
+https://www.yahoo.com/	read	OK; Yahoo; ~900 words
+https://www.msn.com/	not read	blocked: empty shell
+https://weather.com/	not read	blocked: empty page shell
+https://www.healthline.com/	read	OK; Healthline; ~300 words
+https://www.webmd.com/	read	OK; WebMD; ~500 words
+https://www.investopedia.com/	not read	HTTP 402
+https://www.yelp.com/	not read	HTTP 403
+https://www.amazon.com/	not read	blocked: empty shell
+https://www.ebay.com/	not read	HTTP 403
+https://www.congress.gov/	not read	HTTP 403
+https://www.unesco.org/en	read	OK; UNESCO; ~650 words
+https://www.alibaba.com/	read	OK; Alibaba; ~300 words
+https://www.espn.com/	read	OK; ESPN; ~400 words
+https://www.cbsnews.com/	read	OK; CBS News; ~900 words
+https://www.wattpad.com/	read	OK; Wattpad; ~200 words
+https://stackoverflow.com/questions/11227809/why-is-processing-a-sorted-array-faster-than-processing-an-unsorted-array	not read	HTTP 403
+https://www.glassdoor.com/	not read	HTTP 403
+https://www.indeed.com/	not read	HTTP 403
+https://www.zillow.com/	not read	HTTP 403
+https://www.tripadvisor.com/	not read	HTTP 403
+https://www.booking.com/	not read	blocked: empty page
+https://www.imdb.com/title/tt0111161/	not read	HTTP 403
+https://www.g2.com/	not read	HTTP 403
+https://www.crunchbase.com/organization/anthropic	not read	HTTP 403
+https://www.researchgate.net/	not read	HTTP 403
+https://www.sciencedirect.com/	not read	HTTP 403
+https://www.nature.com/	not read	303 to idp login; then 302 cookie error
+https://www.youtube.com/watch?v=dQw4w9WgXcQ	not read	blocked: empty shell
+https://scholar.google.com/scholar?q=transformer+attention	read	OK; Google Scholar; ~350 words
+https://openai.com/	not read	HTTP 403
+https://www.etsy.com/	not read	HTTP 403
+https://www.walmart.com/	not read	thin: OK but ~90 words, borderline
+https://www.bestbuy.com/	not read	thin: OK but ~40 words
+https://www.target.com/	read	OK; Target; ~1200 words
+https://github.com/rust-lang/rust	read	OK; GitHub rust-lang/rust; ~350 words
+https://en.wikipedia.org/wiki/Web_scraping	read	OK; Web scraping; ~2500 words
+https://news.ycombinator.com/	read	OK; Hacker News; ~450 words

@@ -6,38 +6,52 @@ Agent harnesses fetch pages with a bot identity, and a large part of the web ans
 
 | 97 popular sites that block AI agents | Pages read |
 | --- | --- |
-| Built-in agent fetch (Claude Code `WebFetch`) | 42 |
-| **Fetchroam** | **71** |
+| **Fetchroam** | **75** |
+| curl | 47 |
+| Reference MCP fetch server | 41 |
+| Claude Code built-in `WebFetch` | 36 |
 
-Measured on 2026-10-11 from a cloud server, one request per site, no proxy. The list covers news, docs, forums, shops and social sites such as The New York Times, Reuters, Bloomberg, The Atlantic, Medium, The Verge, Fandom and Unsplash.
+Fetchroam read 21 sites that no other tool in the table could read. Among them: The New York Times, Reuters, Bloomberg, The Washington Post, Medium, Reddit, Stack Overflow and YouTube.
 
-- **`web_search`** — DuckDuckGo results with no key, or your own SearXNG instance.
-- **`web_fetch`** — clean Markdown with links, tables and code blocks intact. Long pages can be read in parts.
-- **Browser-grade requests** — Safari's TLS, HTTP/2 and header fingerprint. A refused fetch is retried automatically, as the same browser or as a second one.
-- **Passes Cloudflare checks** — when a site insists on a JavaScript check, your own Firefox passes it once. After that, Fetchroam reads the site with plain requests.
-- **Anubis-aware** — completes Anubis proof-of-work checks, as a browser does.
-- **Lightweight** — a 14 MB Rust binary. No bundled browser, no JavaScript engine, no Python, no Node.
-- **Works everywhere** — a stdio MCP server for agent harnesses, and a plain CLI for everything else.
+| One page, started fresh | Time | Peak memory |
+| --- | --- | --- |
+| **Fetchroam** | **0.19 s** | **17 MB** |
+| Headless Chromium | 1.15 s | 544 MB |
+
+Measured on 2026-10-11 from a cloud server, with no proxy. See [how we measured](#benchmark) and how to run it again.
+
+## What your agent gets
+
+- **Search with no key.** Brave and DuckDuckGo results, with domain and date filters, quoted phrases and paging. Specialist sources for GitHub, Stack Overflow, Hacker News, arXiv and research papers. Or your own SearXNG.
+- **Search and read in one call.** Ask for the content of the top results together with the result list.
+- **Clean Markdown.** Links, tables and code blocks stay intact. Long pages come in parts.
+- **PDFs.** Papers and reports come back as text, page by page.
+- **Sites that need JavaScript.** Fetchroam reads the data inside the page, and uses the site's public API or feed for Stack Overflow, Reddit, X posts, PyPI and crates.io. No browser runs.
+- **Browser-grade requests.** Safari's TLS, HTTP/2 and header fingerprint. A refused fetch is retried automatically, as the same browser or as a second one.
+- **Cloudflare checks.** When a site insists on a JavaScript check, your own Firefox passes it once. After that, Fetchroam reads the site with plain requests.
+- **Fast on repeat.** Several pages in one call, fetched at the same time. A page fetched in the last 15 minutes comes from a local copy.
+- **Lightweight.** A 16 MB Rust binary. No bundled browser, no JavaScript engine, no Python, no Node.
+- **Works everywhere.** A stdio MCP server for agent harnesses, and a plain CLI for everything else.
 
 ## Install
 
 macOS and Linux:
 
 ```sh
-curl --proto '=https' --tlsv1.2 -LsSf https://github.com/dtheDavid/fetchroam/releases/latest/download/fetchroam-installer.sh | sh
+curl -fsSL https://dthedavid.github.io/fetchroam/install.sh | sh
 ```
 
-Windows (PowerShell):
+Windows, in PowerShell:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -c "irm https://github.com/dtheDavid/fetchroam/releases/latest/download/fetchroam-installer.ps1 | iex"
+irm https://dthedavid.github.io/fetchroam/install.ps1 | iex
 ```
 
 The installer puts `fetchroam` in `~/.local/bin`. Check it with `fetchroam --version`.
 
 ## Connect your agent
 
-Each harness needs one command. After that, the agent has `web_search` and `web_fetch`.
+Each harness needs one command. After that, the agent has `web_search`, `web_fetch` and `web_fetch_many`.
 
 **Claude Code**
 
@@ -65,7 +79,7 @@ args = ["mcp"]
 hermes mcp add fetchroam --command fetchroam --args mcp
 ```
 
-Hermes connects, lists the two tools and asks to enable them. Answer `Y`.
+Hermes connects, lists the tools and asks to enable them. Answer `Y`.
 
 **Pi**
 
@@ -73,7 +87,7 @@ Hermes connects, lists the two tools and asks to enable them. Answer `Y`.
 pi mcp add fetchroam -- fetchroam mcp
 ```
 
-Pi hides MCP tools behind its code mode by default. To show both tools to the model directly, set the exposure in `~/.pi/agent/mcp.json`:
+Pi hides MCP tools behind its code mode by default. To show the tools to the model directly, set the exposure in `~/.pi/agent/mcp.json`:
 
 ```json
 {
@@ -127,7 +141,7 @@ Any other MCP client: add a stdio server with the command `fetchroam` and the ar
 ```markdown
 ## Web access
 - Search the web: `fetchroam search "<query>"`
-- Read a page: `fetchroam fetch <url> --format markdown`
+- Read pages: `fetchroam fetch <url> [<url>...] --format markdown`
 ```
 
 **Make it the default.** To have the agent use Fetchroam and not its built-in tools, turn the built-ins off:
@@ -138,10 +152,13 @@ Any other MCP client: add a stdio server with the command `fetchroam` and the ar
 ## Use it from the command line
 
 ```sh
-fetchroam search "rust http client tls fingerprint"
-fetchroam fetch https://www.nytimes.com/section/technology --format markdown
-fetchroam fetch https://en.wikipedia.org/wiki/Web_scraping --max-chars 8000 --offset 8000
-fetchroam search "site:example.org pricing" --provider searxng --searxng-url https://searx.example.org
+fetchroam search "rust async runtime comparison"
+fetchroam search "tokio select" --site docs.rs --time year
+fetchroam search "postgres vacuum freeze" --read 3
+fetchroam search "retrieval augmented generation" --provider papers
+fetchroam fetch https://stackoverflow.com/questions/231767 --format markdown
+fetchroam fetch https://arxiv.org/pdf/1706.03762 --max-chars 8000 --offset 8000
+fetchroam fetch https://www.rust-lang.org/ https://go.dev/ https://ziglang.org/
 ```
 
 Output is JSON by default, so scripts and agents can parse it. `--format markdown` prints only the page content.
@@ -153,22 +170,51 @@ Output is JSON by default, so scripts and agents can parse it. `--format markdow
 | Input | Meaning |
 | --- | --- |
 | `url` | The page to read. |
-| `max_chars` | Optional. The most content characters to return. |
+| `max_chars` | Optional. The most content characters to return. The default is 50,000. |
 | `offset` | Optional. The first content character to return. |
+| `fresh` | Optional. Fetch again even if a copy from the last 15 minutes exists. |
 
-The result has `title`, `description`, `content` (Markdown), `total_chars`, `url` (after redirects), `status` and `retrieved_at`. To read a long page in parts, call again with a higher `offset` until it reaches `total_chars`.
+The result has `title`, `description`, `content` (Markdown), `total_chars`, `url` (after redirects), `status` and `retrieved_at`. To read a long page in parts, call again with a higher `offset` until it reaches `total_chars`. The parts come from the local copy, so the site gets one request.
 
-HTML becomes Markdown. JSON, plain text and XML feeds come back as they are. A page that renders only with JavaScript returns its title and description.
+HTML becomes Markdown. A PDF becomes text with `[Page N]` marks. JSON, plain text and XML feeds come back as they are.
+
+### `web_fetch_many`
+
+| Input | Meaning |
+| --- | --- |
+| `urls` | The pages to read. They are fetched at the same time. |
+| `max_chars` | Optional. The most content characters per page. By default the pages share 50,000. |
+| `fresh` | Optional. As for `web_fetch`. |
+
+The result has `pages`: one entry per URL, in order. Each entry is the page, or its `error`.
 
 ### `web_search`
 
 | Input | Meaning |
 | --- | --- |
-| `query` | The search query. |
-| `provider` | Optional. `duckduckgo` (default) or `searxng`. |
-| `searxng_url` | The base URL of your SearXNG instance. It must have JSON output on. |
+| `query` | The search query. Quoted phrases work. |
+| `provider` | Optional. See the list below. The default is `auto`. |
+| `site` | Optional. Keep results from one domain, for example `docs.rs`. |
+| `time` | Optional. `day`, `week`, `month` or `year`. |
+| `page` | Optional. The result page, from 1. |
+| `read` | Optional. Also return the page content of this many top results. |
+| `searxng_url` | The base URL of your SearXNG instance, for the `searxng` provider. It must have JSON output on. |
 
-Each result has `title`, `url` and `snippet`.
+Each result has `title`, `url` and `snippet`, and `content` when you set `read`.
+
+| Provider | Source |
+| --- | --- |
+| `auto` | Brave, then DuckDuckGo when Brave gives no results. |
+| `brave` | Brave Search. About 20 results per page. |
+| `duckduckgo` | DuckDuckGo. First page only. |
+| `searxng` | Your own SearXNG instance. |
+| `github` | GitHub repositories, with stars and language. |
+| `stackoverflow` | Stack Overflow questions, with score and answer count. |
+| `hackernews` | Hacker News stories, with points and the discussion link. |
+| `arxiv` | arXiv papers, with abstracts. |
+| `papers` | Research papers from OpenAlex, with citation counts and open-access links. |
+
+`site`, `time` and quoted phrases apply to the web engines. The specialist sources are free public APIs with their own request limits.
 
 ### Errors
 
@@ -179,27 +225,18 @@ A failed call returns an `error` object with a `code` the agent can act on:
 | `challenge_required` | The site answered with a bot challenge that needs a browser. |
 | `http_error` | The site refused the request. `status` has the HTTP code. |
 | `rate_limited` | The site asked to slow down. `retry_after` has the wait, when given. |
-| `unsupported_content` | The URL is not text (an image or a PDF, for example). |
-| `extraction_failed` | The page has no readable content. |
-
-## Use a proxy
-
-Some sites refuse cloud server addresses whatever the request looks like. If your agent runs on a server, send Fetchroam through a residential proxy. Put one line in `~/.config/fetchroam/proxy`:
-
-```
-host:port:username:password
-```
-
-Fetchroam then sends every search and fetch through that HTTP proxy. The file holds the password in plain text, so keep it private: `chmod 600 ~/.config/fetchroam/proxy`. Delete the file to go direct again.
+| `timeout` | The site did not answer within 30 seconds. |
+| `unsupported_content` | The URL is not text or a PDF (an image, for example). |
+| `extraction_failed` | The page has no readable content. A scanned PDF has no text. |
 
 ## Cloudflare checks
 
-Some sites, Stack Overflow for one, answer every first request with a JavaScript check. Fetchroam handles it in two steps:
+Some sites answer every first request with a JavaScript check. Fetchroam handles it in two steps:
 
 1. Your own Firefox passes the check once. It runs hidden, with a throwaway profile, for a few seconds.
-2. Fetchroam saves the clearance for that site and goes back to plain requests. On Stack Overflow, one pass is good for a year.
+2. Fetchroam saves the clearance for that site and goes back to plain requests. On Medium, one pass is good for a year.
 
-In our test, the first Stack Overflow page took about 6 seconds and the next one under 2 seconds.
+In our test, the first page of such a site took about 5 seconds and the next one under 2 seconds.
 
 This needs Firefox, or a Firefox-based browser, on the machine. Without one, nothing changes: the fetch returns `challenge_required`.
 
@@ -220,9 +257,34 @@ Notes:
 - A clearance belongs to the address that earned it, so the browser is not used together with a proxy.
 - Saved clearances are in `~/.config/fetchroam/clearance/`. Delete a file to forget a site.
 
+## Use a proxy
+
+Some sites refuse cloud server addresses whatever the request looks like. If your agent runs on a server, send Fetchroam through a residential proxy. Put one line in `~/.config/fetchroam/proxy`:
+
+```
+host:port:username:password
+```
+
+Fetchroam then sends every search and fetch through that HTTP proxy. The file holds the password in plain text, so keep it private: `chmod 600 ~/.config/fetchroam/proxy`. Delete the file to go direct again.
+
 ## What it does not do
 
-Fetchroam itself does not run JavaScript, solve CAPTCHAs or log in. Pages behind a CAPTCHA, a paywall or a sign-in wall stay closed, and Fetchroam says so with an error code.
+Fetchroam itself does not run JavaScript, solve CAPTCHAs or log in. A page that shows its content only after its scripts run, with no data inside the HTML and no public API, returns its title and description. Pages behind a CAPTCHA, a paywall or a sign-in wall stay closed, and Fetchroam says so with an error code.
+
+## Benchmark
+
+The numbers at the top come from two scripts in [`bench/`](bench).
+
+- **Pages read.** `bench/bench.py` reads each of the 97 sites in [`bench/sites.txt`](bench/sites.txt) once with each tool. A page counts as read when the tool returns at least 500 characters of text and the text is not a bot check. The same rule is applied to every tool. Fetchroam ran three times and read 73, 76 and 75 pages; the table shows the middle run. Claude Code's `WebFetch` cannot be scripted, so an agent called it once per site and recorded if real content came back.
+- **Time and memory.** `bench/speed.py` reads 10 pages with each program, started fresh for every page, and reports the median.
+
+The per-site results are in [`bench/results/`](bench/results). Sites change their rules often, and results differ between networks, so run it yourself:
+
+```sh
+python3 bench/bench.py fetchroam curl
+pip install mcp-server-fetch && python3 bench/bench.py reference
+python3 bench/speed.py /path/to/chromium
+```
 
 ## Build from source
 
