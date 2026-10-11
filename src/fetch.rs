@@ -206,7 +206,13 @@ async fn download(url: &str, options: Options<'_>) -> Result<FetchResponse, Tool
             .unwrap_or(UTF_8);
         let (body, _, _) = encoding.decode(&bytes);
         if is_html {
-            let mut extracted = extract(&body, &final_url);
+            let own = alternates::parse(&final_url, &body).map(|page| Extracted {
+                title: page.title,
+                description: None,
+                content: page.content,
+                summary_only: false,
+            });
+            let mut extracted = own.map_or_else(|| extract(&body, &final_url), Ok);
             // A page with no article and no data needs its scripts. Run them when a renderer
             // is installed; it makes its own request, so not behind a proxy.
             let shell = extracted.as_ref().map_or(true, |page| page.summary_only);
@@ -287,7 +293,7 @@ pub fn extract(html: &str, url: &str) -> Result<Extracted, ToolError> {
     let document = Document::from(html);
     let description = description(&document);
     let page_title = document.select("title").text().trim().to_owned();
-    let embedded = embedded_text(&document);
+    let (embedded, bodies) = embedded_text(&document);
     plain_code_blocks(&document);
     let article = Readability::with_document(document, Some(url), None)
         .and_then(|mut readability| readability.parse());
@@ -312,8 +318,26 @@ pub fn extract(html: &str, url: &str) -> Result<Extracted, ToolError> {
         long.map(str::to_lowercase).collect()
     };
     let shown = words(&content);
+    // A page can show the start of an article and hold all of it in its data. A rich-text body
+    // is that article when it has the words that the page shows.
+    let body = bodies.iter().max_by_key(|body| body.len());
+    let body = body
+        .filter(|body| body.len() > content.len())
+        .filter(|body| {
+            let inside = words(body);
+            shown.iter().filter(|word| inside.contains(*word)).count() * 2 >= shown.len()
+        });
+    if let Some(body) = body {
+        return Ok(Extracted {
+            title,
+            description,
+            content: body.clone(),
+            summary_only,
+        });
+    }
     let unseen: Vec<&str> = embedded
         .iter()
+        .chain(&bodies)
         .map(String::as_str)
         .filter(|text| {
             let words = words(text);
@@ -379,15 +403,18 @@ fn description(document: &Document) -> Option<String> {
 }
 
 /// Prose in the page's embedded data: JSON-LD, framework state, and JSON that a script assigns,
-/// passes to a call, or holds in an object. Each text appears once, in page order.
-fn embedded_text(document: &Document) -> Vec<String> {
+/// passes to a call, or holds in an object. Each text appears once, in page order. The second
+/// list holds article bodies that the data stores as rich text.
+fn embedded_text(document: &Document) -> (Vec<String>, Vec<String>) {
     let mut found = Vec::new();
+    let mut bodies = Vec::new();
     for script in document.select("script").iter() {
         let source = script.text();
         let kind = script.attr("type").unwrap_or_default().to_ascii_lowercase();
         if kind.ends_with("json") {
             if let Ok(data) = serde_json::from_str(&source) {
                 prose(&data, "", &mut found);
+                rich_text(&data, &mut bodies);
             }
             continue;
         }
@@ -398,6 +425,7 @@ fn embedded_text(document: &Document) -> Vec<String> {
             match values.next().filter(|_| assigned) {
                 Some(Ok(data)) => {
                     prose(&data, "", &mut found);
+                    rich_text(&data, &mut bodies);
                     rest = &rest[at + values.byte_offset()..];
                 }
                 _ => rest = &rest[at + 2..],
@@ -406,7 +434,56 @@ fn embedded_text(document: &Document) -> Vec<String> {
     }
     let mut seen = HashSet::new();
     found.retain(|text| seen.insert(text.clone()));
-    found
+    (found, bodies)
+}
+
+/// Article bodies stored as rich text: a node of type "document" whose content is a list of
+/// blocks, with the words in nodes of type "text". Each body is its blocks in order.
+fn rich_text(data: &Value, found: &mut Vec<String>) {
+    let kind = |node: &Value| node["type"].as_str().unwrap_or_default().to_owned();
+    match data {
+        Value::Object(fields) => {
+            let Some(blocks) = data["content"]
+                .as_array()
+                .filter(|_| kind(data) == "document")
+            else {
+                return fields.values().for_each(|value| rich_text(value, found));
+            };
+            let mut lines = Vec::new();
+            for block in blocks {
+                // A list has one line for each item.
+                let items = block["content"]
+                    .as_array()
+                    .filter(|_| kind(block).contains("list"));
+                for (part, mark) in match items {
+                    Some(items) => items.iter().map(|item| (item, "- ")).collect(),
+                    None if kind(block).starts_with("heading") => vec![(block, "## ")],
+                    None => vec![(block, "")],
+                } {
+                    let mut line = String::new();
+                    inline(part, &mut line);
+                    if !line.trim().is_empty() {
+                        lines.push(format!("{mark}{}", line.trim()));
+                    }
+                }
+            }
+            found.push(lines.join("\n\n"));
+        }
+        Value::Array(items) => items.iter().for_each(|item| rich_text(item, found)),
+        _ => {}
+    }
+}
+
+/// Appends the words of every "text" node under `node`.
+fn inline(node: &Value, line: &mut String) {
+    match node {
+        Value::Object(fields) => match (node["type"].as_str(), node["value"].as_str()) {
+            (Some("text"), Some(words)) => line.push_str(words),
+            _ => fields.values().for_each(|value| inline(value, line)),
+        },
+        Value::Array(items) => items.iter().for_each(|item| inline(item, line)),
+        _ => {}
+    }
 }
 
 /// Collects strings that sit under keys which name text for people, such as `description`.

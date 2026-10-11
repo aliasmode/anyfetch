@@ -2,6 +2,9 @@
 //!
 //! Each route returns the same content as the page, from an endpoint the site publishes for
 //! programs. A route that fails is skipped and the page itself is fetched as usual.
+//!
+//! [`parse`] is for a page that arrives, but holds its content where the general extractor
+//! cannot read it.
 
 use crate::transport;
 use dom_query::Document;
@@ -22,6 +25,8 @@ enum Route {
     Crate(String),
     /// The Atom feed of a Reddit listing or comment thread.
     Reddit(String),
+    /// The data of a Reuters article page.
+    Reuters(String),
 }
 
 fn route(url: &Url) -> Option<Route> {
@@ -42,6 +47,13 @@ fn route(url: &Url) -> Option<Route> {
             let path = url.path().trim_end_matches('/');
             Some(Route::Reddit(format!("https://www.reddit.com{path}/.rss")))
         }
+        // Reuters answers an article page with a bot check, but gives the data of that page.
+        ("reuters.com", [.., slug]) if dated(slug) => {
+            let path = url.path();
+            Some(Route::Reuters(format!(
+                "https://www.reuters.com{path}?outputType=json"
+            )))
+        }
         (_, ["questions", id, ..]) if number(id) => {
             let site = match host {
                 "stackoverflow.com" | "superuser.com" | "serverfault.com" | "askubuntu.com"
@@ -52,6 +64,19 @@ fn route(url: &Url) -> Option<Route> {
         }
         _ => None,
     }
+}
+
+/// Reuters ends the address of an article with its date, such as `-2026-10-06`.
+fn dated(slug: &str) -> bool {
+    let bytes = slug.as_bytes();
+    let date = bytes.len().checked_sub(11).map(|start| &bytes[start..]);
+    date.is_some_and(|date| {
+        let fits = |(index, byte): (usize, &u8)| match index {
+            0 | 5 | 8 => *byte == b'-',
+            _ => byte.is_ascii_digit(),
+        };
+        date.iter().enumerate().all(fits)
+    })
 }
 
 /// Reads the content of `url` from the site's public API or feed, if the site has one.
@@ -96,6 +121,7 @@ pub(crate) async fn read(url: &Url) -> Option<Page> {
             let body = transport::get(&feed, |_| true).await.ok()?;
             feed_page(&body.text())
         }
+        Route::Reuters(data) => reuters_page(&json(&data).await?),
     }
 }
 
@@ -114,6 +140,131 @@ fn text(value: &Value) -> String {
 
 fn markdown(html: &str) -> String {
     Document::from(html).md(None).trim().to_owned()
+}
+
+/// The text of an HTML fragment, without its tags.
+fn plain(html: &str) -> String {
+    let text = Document::from(html).select("body").text();
+    // Reuters puts zero-width characters inside words.
+    text.replace(['\u{200b}', '\u{200c}', '\u{200d}'], "")
+        .trim()
+        .to_owned()
+}
+
+/// A Reuters article from the data of its page: a list of blocks, one of which holds the article.
+fn reuters_page(blocks: &Value) -> Option<Page> {
+    let articles = blocks.as_array()?.iter();
+    let article = articles
+        .map(|block| &block["data"]["article"])
+        .find(|article| article["content_elements"].is_array())?;
+    let mut content = vec![format!("Reuters, {}.", text(&article["published_time"]))];
+    for element in article["content_elements"].as_array()? {
+        // Other elements are places for advertisements and newsletters.
+        let body = element["content"].as_str().map(plain).unwrap_or_default();
+        match element["type"].as_str() {
+            Some("paragraph") if !body.is_empty() => content.push(body),
+            Some("header") if !body.is_empty() => content.push(format!("## {body}")),
+            _ => {}
+        }
+    }
+    content.push(plain(&text(&article["sign_off"])));
+    Some(Page {
+        title: plain(article["title"].as_str()?),
+        content: content.join("\n\n").trim_end().to_owned(),
+    })
+}
+
+/// The content of a page that holds it where the general extractor cannot read it.
+pub(crate) fn parse(url: &str, html: &str) -> Option<Page> {
+    let url = Url::parse(url).ok()?;
+    match url.host_str()?.trim_start_matches("www.") {
+        "quora.com" => quora_page(html),
+        _ => None,
+    }
+}
+
+/// A Quora question page. Its scripts hold the question and the first answers as JSON
+/// documents inside string literals: `.push("{...}")`.
+fn quora_page(html: &str) -> Option<Page> {
+    let mut asked = None;
+    let mut count = None;
+    let mut found = Vec::new();
+    for literal in html.split(".push(").skip(1) {
+        let mut literals = serde_json::Deserializer::from_str(literal).into_iter::<String>();
+        let Some(Ok(document)) = literals.next() else {
+            continue;
+        };
+        let Ok(data) = serde_json::from_str::<Value>(&document) else {
+            continue;
+        };
+        let question = &data["data"]["question"];
+        if asked.is_none()
+            && let Some(title) = question["title"].as_str()
+        {
+            asked = Some((question["qid"].clone(), rich_text(title)));
+        }
+        count = count.or(question["answerCount"].as_u64());
+        answers(&data, &mut found);
+    }
+    let (asked, title) = asked.filter(|(question, _)| !question.is_null())?;
+    // Promoted answers belong to other questions.
+    found.retain(|(question, _, _)| *question == asked);
+    let mut sections: Vec<String> = Vec::new();
+    for (_, author, answer) in found {
+        let section = format!("## Answer by {author}\n\n{answer}");
+        if !sections.contains(&section) {
+            sections.push(section);
+        }
+    }
+    let all = count.map_or_else(String::new, |count| format!(" of {count}"));
+    (!sections.is_empty()).then(|| Page {
+        title,
+        content: format!(
+            "The first {}{all} answers on Quora.\n\n{}",
+            sections.len(),
+            sections.join("\n\n")
+        ),
+    })
+}
+
+/// Collects (question id, author, text) for every answer in a document of a Quora page.
+fn answers(data: &Value, found: &mut Vec<(Value, String, String)>) {
+    match data {
+        Value::Object(fields) => {
+            if let Some(content) = fields.get("content").and_then(Value::as_str)
+                && content.starts_with("{\"sections\"")
+                && fields.contains_key("author")
+            {
+                let name = &data["author"]["names"][0];
+                let author = [text(&name["givenName"]), text(&name["familyName"])].join(" ");
+                let question = data["question"]["qid"].clone();
+                found.push((question, author.trim().to_owned(), rich_text(content)));
+            }
+            fields.values().for_each(|value| answers(value, found));
+        }
+        Value::Array(items) => items.iter().for_each(|item| answers(item, found)),
+        _ => {}
+    }
+}
+
+/// Quora's rich text as Markdown: a JSON document of sections, each a list of text spans.
+fn rich_text(document: &str) -> String {
+    let document: Value = serde_json::from_str(document).unwrap_or_default();
+    let sections = document["sections"].as_array().into_iter().flatten();
+    let lines = sections.filter_map(|section| {
+        let spans = section["spans"].as_array()?.iter();
+        let line: String = spans.filter_map(|span| span["text"].as_str()).collect();
+        let list = section["type"]
+            .as_str()
+            .is_some_and(|kind| kind.ends_with("-list"));
+        let mark = match (list, section["quoted"] == true) {
+            (true, _) => "- ",
+            (false, true) => "> ",
+            (false, false) => "",
+        };
+        (!line.trim().is_empty()).then(|| format!("{mark}{}", line.trim()))
+    });
+    lines.collect::<Vec<_>>().join("\n\n")
 }
 
 fn question_page(question: &Value, answers: &Value) -> Option<Page> {
@@ -234,6 +385,13 @@ mod tests {
             ),
             ("https://www.reddit.com/r/rust/.rss", None),
             ("https://www.reddit.com/r/rust/wiki/index", None),
+            (
+                "https://www.reuters.com/world/us/early-voting-begins-2026-10-06/",
+                Some(Route::Reuters(
+                    "https://www.reuters.com/world/us/early-voting-begins-2026-10-06/?outputType=json".into(),
+                )),
+            ),
+            ("https://www.reuters.com/world/us/", None),
             ("https://pypi.org/project/requests/2.31.0/", None),
             ("https://crates.io/crates/serde/versions", None),
         ] {
@@ -288,5 +446,70 @@ mod tests {
             "## First post\n\nhttps://www.reddit.com/r/rust/comments/1/\n/u/ann, 2026-10-11T00:00:00+00:00\n\nBody **text**"
         );
         assert!(feed_page("<html><body>blocked</body></html>").is_none());
+    }
+
+    #[test]
+    fn renders_a_reuters_article_from_the_data_of_its_page() {
+        let blocks = json!([
+            {"type": "page-metadata", "data": {"title": "Site title"}},
+            {"type": "article_detail", "data": {"article": {
+                "title": "Rates rise",
+                "published_time": "2026-10-07T04:33:49Z",
+                "sign_off": "Reporting by \u{200b}A. Writer",
+                "content_elements": [
+                    {"type": "paragraph", "content": "The bank raised its <a href=\"/x\">rate</a> to 5.5% on Wed\u{200c}nesday."},
+                    {"type": "placeholder", "content": ["adSlot_mpu"]},
+                    {"type": "header", "level": 1, "content": "WHAT COMES NEXT"},
+                    {"type": "paragraph", "content": "Markets expect more."}
+                ]}}}
+        ]);
+        let page = reuters_page(&blocks).unwrap();
+        assert_eq!(page.title, "Rates rise");
+        assert_eq!(
+            page.content,
+            "Reuters, 2026-10-07T04:33:49Z.\n\nThe bank raised its rate to 5.5% on Wednesday.\n\n\
+             ## WHAT COMES NEXT\n\nMarkets expect more.\n\nReporting by A. Writer"
+        );
+        assert!(reuters_page(&json!([{"data": {}}])).is_none());
+    }
+
+    #[test]
+    fn reads_the_answers_in_the_scripts_of_a_quora_page() {
+        let rich = |text: &str| {
+            json!({"sections": [{"type": "plain", "spans": [{"text": text}]}]}).to_string()
+        };
+        let answer = |question: u64, name: &str, text: &str| {
+            json!({"content": rich(text), "author": {"names": [{"givenName": name, "familyName": ""}]},
+                "question": {"qid": question}})
+        };
+        let list = json!({"sections": [
+            {"type": "plain", "spans": [{"text": "Light "}, {"text": "scatters."}]},
+            {"type": "unordered-list", "spans": [{"text": "Blue scatters most"}]},
+            {"type": "image", "spans": [{"text": ""}]},
+            {"type": "plain", "quoted": true, "spans": [{"text": "Rayleigh, 1871"}]}
+        ]});
+        let mut second = answer(7, "Bo", "");
+        second["content"] = json!(list.to_string());
+        let documents = [
+            json!({"data": {"question": {"qid": 7, "title": rich("Why is the sky blue?"), "answerCount": 702,
+                "answers": {"edges": [{"node": {"answer": answer(7, "Ann", "Because of the air.")}}]},
+                "ads": [{"ad": {"answer": answer(9, "Seller", "Buy this.")}}]}}}),
+            json!({"data": {"node": {"answer": second}}}),
+        ];
+        let literal = |document: &Value| serde_json::to_string(&document.to_string()).unwrap();
+        let html = format!(
+            "<script>results[\"a\"].push({});results[\"b\"].push({});list.push(1);</script>",
+            literal(&documents[0]),
+            literal(&documents[1])
+        );
+        let page = parse("https://www.quora.com/Why-is-the-sky-blue", &html).unwrap();
+        assert_eq!(page.title, "Why is the sky blue?");
+        assert_eq!(
+            page.content,
+            "The first 2 of 702 answers on Quora.\n\n## Answer by Ann\n\nBecause of the air.\n\n\
+             ## Answer by Bo\n\nLight scatters.\n\n- Blue scatters most\n\n> Rayleigh, 1871"
+        );
+        assert!(parse("https://www.quora.com/x", "<html>Just a moment</html>").is_none());
+        assert!(parse("https://example.org/x", &html).is_none());
     }
 }

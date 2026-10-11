@@ -37,6 +37,7 @@ Measured on 2026-10-11 from a cloud server, with no proxy. See [how we measured]
 - **Clean Markdown.** Links, tables and code blocks stay intact. Long pages come in parts.
 - **PDFs.** Papers and reports come back as text, page by page.
 - **Sites that need JavaScript.** Anyfetch reads the data inside the page, and uses the site's public API or feed for Stack Overflow, Reddit, X posts, PyPI and crates.io. No browser runs. For pages that hold nothing without their scripts, it can use Lightpanda, an optional small engine.
+- **News and answers.** Full articles on Reuters and Bloomberg, and the answers on Quora, from the data that these sites send with the page.
 - **Browser-grade requests.** Safari's TLS, HTTP/2 and header fingerprint. A refused fetch is retried automatically, as the same browser or as a second one.
 - **Cloudflare checks.** When a site insists on a JavaScript check, your own Firefox passes it once. After that, Anyfetch reads the site with plain requests.
 - **Fast on repeat.** Several pages in one call, fetched at the same time. A page fetched in the last 15 minutes comes from a local copy.
@@ -315,7 +316,7 @@ Need a proxy? [NobleProxy](https://nobleproxy.com/?utm_source=anyfetch&utm_mediu
 
 ## What it does not do
 
-Anyfetch itself does not run JavaScript, solve CAPTCHAs or log in. A page that shows its content only after its scripts run, with no data inside the HTML and no public API, returns its title and description unless Lightpanda is installed. Pages behind a CAPTCHA, a paywall or a sign-in wall stay closed, and Anyfetch says so with an error code.
+Anyfetch itself does not run JavaScript, solve CAPTCHAs or log in. A page that shows its content only after its scripts run, with no data inside the HTML and no public API, returns its title and description unless Lightpanda is installed. It reads what a site sends to a first-time visitor. A page that needs a CAPTCHA, an account or a subscription to load stays closed, and Anyfetch says so with an error code.
 
 Does your agent need a real browser, with logins and saved sessions? Use [AliasMode](https://aliasmode.com/use-cases/ai-agents/). It is our free, open-source antidetect browser, and it has its own MCP server for agents.
 
@@ -334,7 +335,7 @@ The numbers at the top come from two scripts and one question set in [`bench/`](
 | A page on an open site | 10 of 10 | 10 of 10 |
 | No URL: search first, then read | 10 of 10 | 10 of 10 |
 
-In each single run the built-in tools answered 26 questions, but not the same 26. Three things to know about this test. The question writer used Anyfetch to check each answer, so the first group has only pages that Anyfetch can read. Four more sites on the writer's list (Reuters, Bloomberg, Financial Times and Quora) have no question, because it could not read an article page there. The site test above reads the home page of Reuters and Bloomberg, which Anyfetch can read. One Anyfetch test agent stopped after its first question, so its 5 questions were run again. Every answer is in [`bench/results/tasks.tsv`](bench/results/tasks.tsv).
+In each single run the built-in tools answered 26 questions, but not the same 26. Three things to know about this test. The question writer used Anyfetch to check each answer, so the first group has only pages that Anyfetch can read. Four more sites on the writer's list (Reuters, Bloomberg, Financial Times and Quora) have no question, because it could not read an article page there. The site test above reads the home page of Reuters and Bloomberg, which Anyfetch can read. Since version 0.7.0, Anyfetch also reads article pages on Reuters and Bloomberg and the answers on Quora. The Financial Times needs a subscription. One Anyfetch test agent stopped after its first question, so its 5 questions were run again. Every answer is in [`bench/results/tasks.tsv`](bench/results/tasks.tsv).
 
 The per-site results are in [`bench/results/`](bench/results). Sites change their rules often, and results differ between networks, so run it yourself:
 

@@ -228,3 +228,30 @@ fn yahoo_returns_the_destination_of_each_redirect_link() {
     let error = parse_yahoo("<html><body>Sign in</body></html>", 200).unwrap_err();
     assert_eq!(error.code, "unexpected_response");
 }
+
+#[test]
+fn an_article_body_in_the_page_data_replaces_a_shorter_teaser() {
+    use serde_json::json;
+    let text = |value: &str| json!({"type": "text", "value": value});
+    let body = json!({"type": "document", "content": [
+        {"type": "inline-newsletter", "content": []},
+        {"type": "paragraph", "content": [text("Delta reduced its outlook as "), {"type": "link", "content": [text("fuel prices")]}, text(" stay high.")]},
+        {"type": "heading", "content": [text("What it means")]},
+        {"type": "list", "content": [{"type": "listItem", "content": [text("Smaller airlines pay more")]}, {"type": "listItem", "content": [text("Fares can rise")]}]},
+        {"type": "paragraph", "content": [text("The airline said that demand for premium seats is still strong, and that it does not plan to cut flights this winter.")]}
+    ]});
+    let data = json!({"props": {"pageProps": {"story": {"premium": false, "body": body}}}});
+    let html = format!(
+        "<html><head><title>Delta cuts outlook</title></head><body><article><h1>Delta cuts outlook</h1>\
+         <p>Delta reduced its outlook as fuel prices stay high.</p></article>\
+         <script id=\"__NEXT_DATA__\" type=\"application/json\">{data}</script></body></html>"
+    );
+    let page = extract(&html, "https://example.org/story").unwrap();
+    assert_eq!(
+        page.content,
+        "Delta reduced its outlook as fuel prices stay high.\n\n## What it means\n\n\
+         - Smaller airlines pay more\n\n- Fares can rise\n\n\
+         The airline said that demand for premium seats is still strong, and that it does not plan to cut flights this winter."
+    );
+    assert!(!page.summary_only);
+}

@@ -147,5 +147,11 @@ jobs:
           fi
           mv filled.json server.json
           curl -fsSL https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_darwin_arm64.tar.gz | tar xz mcp-publisher
+          # A version in the registry cannot change, so a second run for one release stops here.
+          listed=$(curl -fsS "https://registry.modelcontextprotocol.io/v0/servers?search=io.github.aliasmode/anyfetch&version=$version" | jq '.servers | length')
+          if [ "$listed" != 0 ]; then
+            echo "Version $version is in the registry already."
+            exit 0
+          fi
           ./mcp-publisher login github-oidc
           ./mcp-publisher publish
