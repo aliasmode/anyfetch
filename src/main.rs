@@ -14,6 +14,8 @@ struct Cli {
 enum Command {
     /// Serve the web tools over stdio MCP.
     Mcp,
+    /// Connect Anyfetch to the agent harnesses on this machine.
+    Setup,
     /// Search without an API key. The default provider tries Brave, then Yahoo, then DuckDuckGo.
     Search {
         query: String,
@@ -83,6 +85,10 @@ async fn main() -> ExitCode {
                     ExitCode::FAILURE
                 }
             };
+        }
+        Command::Setup => {
+            println!("{}", anyfetch::setup::setup().await.join("\n"));
+            return ExitCode::SUCCESS;
         }
         Command::Search {
             query,

@@ -1,0 +1,14 @@
+{
+  "name": "anyfetch",
+  "description": "Web search and web fetch with no API keys. Reads sites that answer the built-in tools with 403.",
+  "author": { "name": "AliasMode", "url": "https://github.com/aliasmode" },
+  "homepage": "https://github.com/aliasmode/anyfetch",
+  "repository": "https://github.com/aliasmode/anyfetch",
+  "license": "Apache-2.0",
+  "mcpServers": {
+    "anyfetch": {
+      "command": "sh",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/run.sh"]
+    }
+  }
+}

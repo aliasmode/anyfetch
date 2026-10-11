@@ -1,0 +1,20 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.aliasmode/anyfetch",
+  "title": "Anyfetch",
+  "description": "Web search and web fetch with no API keys. Reads the sites that refuse AI agents.",
+  "repository": {
+    "url": "https://github.com/aliasmode/anyfetch",
+    "source": "github"
+  },
+  "version": "0.0.0",
+  "packages": [
+    {
+      "registryType": "oci",
+      "identifier": "ghcr.io/aliasmode/anyfetch:0.0.0",
+      "transport": {
+        "type": "stdio"
+      }
+    }
+  ]
+}

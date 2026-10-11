@@ -208,3 +208,47 @@ async fn cli_fetch_renders_a_page_that_has_no_text_without_its_scripts() {
         format!("fetch --dump html --wait-until networkidle --wait-ms 10000 {url}")
     );
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn cli_setup_connects_the_harnesses_on_the_path() {
+    use std::os::unix::fs::PermissionsExt;
+    let home = std::env::temp_dir().join(format!("anyfetch-setup-test-{}", std::process::id()));
+    let bin = home.join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    std::fs::create_dir_all(home.join(".cursor")).unwrap();
+    // A harness that records its arguments, and one whose command fails.
+    for (name, script) in [
+        (
+            "codex",
+            "#!/bin/sh\necho \"$@\" > \"$HOME/codex-arguments\"\n",
+        ),
+        (
+            "gemini",
+            "#!/bin/sh\necho 'Error: no settings' >&2\nexit 3\n",
+        ),
+    ] {
+        std::fs::write(bin.join(name), script).unwrap();
+        std::fs::set_permissions(bin.join(name), std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let output = Command::new(env!("CARGO_BIN_EXE_anyfetch"))
+        .arg("setup")
+        .env("HOME", &home)
+        .env("PATH", &bin)
+        .output()
+        .await
+        .unwrap();
+    assert!(output.status.success());
+    let lines = String::from_utf8(output.stdout).unwrap();
+    assert!(lines.contains("Codex: connected\n"), "{lines}");
+    assert!(lines.contains("Gemini CLI: failed: Error: no settings\n"));
+    assert!(lines.contains("Cursor: connected\n"));
+    assert!(lines.contains("Not found: Claude Code, Hermes Agent, Pi, Cline, Amp, OpenClaw."));
+    let program = env!("CARGO_BIN_EXE_anyfetch");
+    let arguments = std::fs::read_to_string(home.join("codex-arguments")).unwrap();
+    assert_eq!(arguments, format!("mcp add anyfetch -- {program} mcp\n"));
+    let cursor = std::fs::read(home.join(".cursor/mcp.json")).unwrap();
+    let cursor: Value = serde_json::from_slice(&cursor).unwrap();
+    assert_eq!(cursor["mcpServers"]["anyfetch"]["command"], program);
+    let _ = std::fs::remove_dir_all(home);
+}

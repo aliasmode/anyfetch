@@ -8,6 +8,7 @@ pub mod mcp;
 mod pdf;
 pub mod render;
 pub mod search;
+pub mod setup;
 pub mod transport;
 
 use serde::Serialize;

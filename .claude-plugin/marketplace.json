@@ -1,0 +1,12 @@
+{
+  "name": "anyfetch",
+  "owner": { "name": "AliasMode" },
+  "description": "Web search and web fetch for Claude Code that read the sites which refuse AI agents",
+  "plugins": [
+    {
+      "name": "anyfetch",
+      "source": "./plugin",
+      "description": "Web search and web fetch with no API keys. Reads sites that answer the built-in tools with 403."
+    }
+  ]
+}
