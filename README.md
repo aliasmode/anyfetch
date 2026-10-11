@@ -154,6 +154,8 @@ gemini mcp add -s user anyfetch anyfetch mcp
 
 Any other MCP client: add a stdio server with the command `anyfetch` and the argument `mcp`.
 
+Anyfetch is in the official [MCP Registry](https://registry.modelcontextprotocol.io/v0/servers?search=anyfetch) as `io.github.aliasmode/anyfetch`.
+
 **No MCP?** Give the agent the CLI. Add this to `AGENTS.md` or the harness's instruction file:
 
 ```markdown
