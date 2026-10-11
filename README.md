@@ -55,11 +55,21 @@ Windows, in PowerShell:
 irm https://aliasmode.github.io/anyfetch/install.ps1 | iex
 ```
 
-The installer puts `anyfetch` in `~/.local/bin`. Check it with `anyfetch --version`.
+The installer puts `anyfetch` in `~/.local/bin`. Then it connects Anyfetch to each agent harness that it finds on the machine: Claude Code, Codex, Gemini CLI, Hermes Agent, Pi, Cline, Amp, OpenClaw and Cursor. Start a new agent session, and the agent has `web_search`, `web_fetch` and `web_fetch_many`.
 
-## Connect your agent
+Did you install a harness later? Run `anyfetch setup`. It uses each harness's own command, tells you what it connected, and is safe to run again.
 
-Each harness needs one command. After that, the agent has `web_search`, `web_fetch` and `web_fetch_many`.
+**Only Claude Code, on macOS or Linux?** You can install Anyfetch as a plugin instead. The plugin gets the program at its first start:
+
+```sh
+claude plugin marketplace add aliasmode/anyfetch && claude plugin install anyfetch@anyfetch
+```
+
+Inside Claude Code 2.1.275 or later, this is one step: `/plugin install anyfetch --marketplace aliasmode/anyfetch`. Use the plugin or the installer, not both, or the agent sees every tool twice.
+
+## Connect your agent by hand
+
+`anyfetch setup` does this for you. To do it by hand, each harness needs one command.
 
 **Claude Code**
 
