@@ -149,7 +149,7 @@ impl Server {
 impl ServerHandler for Server {
     fn get_info(&self) -> ServerInfo {
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
-            .with_server_info(Implementation::new("fetchroam", env!("CARGO_PKG_VERSION")))
+            .with_server_info(Implementation::new("anyfetch", env!("CARGO_PKG_VERSION")))
             .with_instructions(
                 "Web search and page fetch for research. Requests look like a real browser, so \
                  web_fetch reads many sites that refuse default AI fetchers. Page JavaScript is not run.",

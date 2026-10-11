@@ -1,4 +1,4 @@
-use fetchroam::{
+use anyfetch::{
     fetch::extract,
     search::{parse_brave, parse_duckduckgo, parse_searxng, parse_yahoo},
 };
@@ -92,7 +92,7 @@ fn searxng_requires_structured_search_results() {
 
 #[tokio::test]
 async fn searxng_requires_a_valid_instance_before_networking() {
-    use fetchroam::search::{Provider, search};
+    use anyfetch::search::{Provider, search};
     for url in [None, Some("not a URL"), Some("file:///tmp/search")] {
         let error = search("query", Provider::Searxng, url).await.unwrap_err();
         assert_eq!(error.code, "invalid_request");

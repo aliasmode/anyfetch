@@ -1,5 +1,5 @@
 #![cfg(unix)]
-use fetchroam::clearance::obtain;
+use anyfetch::clearance::obtain;
 use std::os::unix::fs::PermissionsExt;
 
 /// Plays the browser: asks the start page as "FakeFox", reads the redirect target, and stores a
@@ -32,7 +32,7 @@ time.sleep(60)
 #[tokio::test]
 async fn obtains_clearance_from_a_browser_started_without_automation() {
     let directory =
-        std::env::temp_dir().join(format!("fetchroam-fake-browser-{}", std::process::id()));
+        std::env::temp_dir().join(format!("anyfetch-fake-browser-{}", std::process::id()));
     std::fs::create_dir_all(&directory).unwrap();
     let browser = directory.join("browser");
     std::fs::write(&browser, FAKE_BROWSER).unwrap();

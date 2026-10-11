@@ -49,12 +49,12 @@ fn client(
     Ok(builder.build()?)
 }
 
-/// Optional HTTP proxy from `~/.config/fetchroam/proxy`: one `host:port:username:password` line.
+/// Optional HTTP proxy from `~/.config/anyfetch/proxy`: one `host:port:username:password` line.
 fn proxy() -> Result<Option<Proxy>, ToolError> {
     let Some(home) = std::env::home_dir() else {
         return Ok(None);
     };
-    let Ok(line) = std::fs::read_to_string(home.join(".config/fetchroam/proxy")) else {
+    let Ok(line) = std::fs::read_to_string(home.join(".config/anyfetch/proxy")) else {
         return Ok(None);
     };
     let invalid = || {

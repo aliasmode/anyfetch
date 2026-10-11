@@ -8,10 +8,10 @@ use std::{
     process::Stdio,
 };
 
-/// The renderer to use, or `None` when rendering is off. `FETCHROAM_RENDERER=off` turns it off;
-/// `FETCHROAM_RENDERER=<path>` selects a program; otherwise `lightpanda` is looked up on PATH.
+/// The renderer to use, or `None` when rendering is off. `ANYFETCH_RENDERER=off` turns it off;
+/// `ANYFETCH_RENDERER=<path>` selects a program; otherwise `lightpanda` is looked up on PATH.
 pub fn renderer() -> Option<PathBuf> {
-    match std::env::var_os("FETCHROAM_RENDERER") {
+    match std::env::var_os("ANYFETCH_RENDERER") {
         Some(value) if value == "off" => None,
         Some(value) if !value.is_empty() => Some(value.into()),
         _ => {

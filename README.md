@@ -1,21 +1,21 @@
-# Fetchroam
+# Anyfetch
 
 **Web search and web fetch for AI agents. One small binary, no API keys, and it reads the sites that refuse your agent.**
 
-Agent harnesses fetch pages with a bot identity, and a large part of the web answers `403`. Fetchroam sends the request a real browser sends, so your agent gets the page.
+Agent harnesses fetch pages with a bot identity, and a large part of the web answers `403`. Anyfetch sends the request a real browser sends, so your agent gets the page.
 
 | 97 popular sites that block AI agents | Pages read |
 | --- | --- |
-| **Fetchroam** | **75** |
+| **Anyfetch** | **75** |
 | curl | 47 |
 | Reference MCP fetch server | 41 |
 | Claude Code built-in `WebFetch` | 36 |
 
-Fetchroam read 21 sites that no other tool in the table could read. Among them: The New York Times, Reuters, Bloomberg, The Washington Post, Medium, Reddit, Stack Overflow and YouTube.
+Anyfetch read 21 sites that no other tool in the table could read. Among them: The New York Times, Reuters, Bloomberg, The Washington Post, Medium, Reddit, Stack Overflow and YouTube.
 
 | One page, started fresh | Time | Peak memory |
 | --- | --- | --- |
-| **Fetchroam** | **0.19 s** | **17 MB** |
+| **Anyfetch** | **0.19 s** | **17 MB** |
 | Headless Chromium | 1.15 s | 544 MB |
 
 Measured on 2026-10-11 from a cloud server, with no proxy. See [how we measured](#benchmark) and how to run it again.
@@ -27,9 +27,9 @@ Measured on 2026-10-11 from a cloud server, with no proxy. See [how we measured]
 - **Answers, not whole pages.** Give a question with the URL, and get only the parts of the page that match it. The Python 3.15 release notes are 218,000 characters; the answer to one question about them came back in 2,200.
 - **Clean Markdown.** Links, tables and code blocks stay intact. Long pages come in parts.
 - **PDFs.** Papers and reports come back as text, page by page.
-- **Sites that need JavaScript.** Fetchroam reads the data inside the page, and uses the site's public API or feed for Stack Overflow, Reddit, X posts, PyPI and crates.io. No browser runs. For pages that hold nothing without their scripts, it can use Lightpanda, an optional small engine.
+- **Sites that need JavaScript.** Anyfetch reads the data inside the page, and uses the site's public API or feed for Stack Overflow, Reddit, X posts, PyPI and crates.io. No browser runs. For pages that hold nothing without their scripts, it can use Lightpanda, an optional small engine.
 - **Browser-grade requests.** Safari's TLS, HTTP/2 and header fingerprint. A refused fetch is retried automatically, as the same browser or as a second one.
-- **Cloudflare checks.** When a site insists on a JavaScript check, your own Firefox passes it once. After that, Fetchroam reads the site with plain requests.
+- **Cloudflare checks.** When a site insists on a JavaScript check, your own Firefox passes it once. After that, Anyfetch reads the site with plain requests.
 - **Fast on repeat.** Several pages in one call, fetched at the same time. A page fetched in the last 15 minutes comes from a local copy.
 - **Lightweight.** A 16 MB Rust binary. No bundled browser, no JavaScript engine, no Python, no Node.
 - **Works everywhere.** A stdio MCP server for agent harnesses, and a plain CLI for everything else.
@@ -39,16 +39,16 @@ Measured on 2026-10-11 from a cloud server, with no proxy. See [how we measured]
 macOS and Linux:
 
 ```sh
-curl -fsSL https://aliasmode.github.io/fetchroam/install.sh | sh
+curl -fsSL https://aliasmode.github.io/anyfetch/install.sh | sh
 ```
 
 Windows, in PowerShell:
 
 ```powershell
-irm https://aliasmode.github.io/fetchroam/install.ps1 | iex
+irm https://aliasmode.github.io/anyfetch/install.ps1 | iex
 ```
 
-The installer puts `fetchroam` in `~/.local/bin`. Check it with `fetchroam --version`.
+The installer puts `anyfetch` in `~/.local/bin`. Check it with `anyfetch --version`.
 
 ## Connect your agent
 
@@ -57,27 +57,27 @@ Each harness needs one command. After that, the agent has `web_search`, `web_fet
 **Claude Code**
 
 ```sh
-claude mcp add --scope user fetchroam -- fetchroam mcp
+claude mcp add --scope user anyfetch -- anyfetch mcp
 ```
 
 **Codex**
 
 ```sh
-codex mcp add fetchroam -- fetchroam mcp
+codex mcp add anyfetch -- anyfetch mcp
 ```
 
 or in `~/.codex/config.toml`:
 
 ```toml
-[mcp_servers.fetchroam]
-command = "fetchroam"
+[mcp_servers.anyfetch]
+command = "anyfetch"
 args = ["mcp"]
 ```
 
 **Hermes Agent**
 
 ```sh
-hermes mcp add fetchroam --command fetchroam --args mcp
+hermes mcp add anyfetch --command anyfetch --args mcp
 ```
 
 Hermes connects, lists the tools and asks to enable them. Answer `Y`.
@@ -85,7 +85,7 @@ Hermes connects, lists the tools and asks to enable them. Answer `Y`.
 **Pi**
 
 ```sh
-pi mcp add fetchroam -- fetchroam mcp
+pi mcp add anyfetch -- anyfetch mcp
 ```
 
 Pi hides MCP tools behind its code mode by default. To show the tools to the model directly, set the exposure in `~/.pi/agent/mcp.json`:
@@ -93,7 +93,7 @@ Pi hides MCP tools behind its code mode by default. To show the tools to the mod
 ```json
 {
   "mcpServers": {
-    "fetchroam": { "command": "fetchroam", "args": ["mcp"], "exposure": "direct" }
+    "anyfetch": { "command": "anyfetch", "args": ["mcp"], "exposure": "direct" }
   }
 }
 ```
@@ -101,7 +101,7 @@ Pi hides MCP tools behind its code mode by default. To show the tools to the mod
 **Gemini CLI**
 
 ```sh
-gemini mcp add -s user fetchroam fetchroam mcp
+gemini mcp add -s user anyfetch anyfetch mcp
 ```
 
 **OpenCode** — in `~/.config/opencode/opencode.json`:
@@ -110,7 +110,7 @@ gemini mcp add -s user fetchroam fetchroam mcp
 {
   "$schema": "https://opencode.ai/config.json",
   "mcp": {
-    "fetchroam": { "type": "local", "command": ["fetchroam", "mcp"], "enabled": true }
+    "anyfetch": { "type": "local", "command": ["anyfetch", "mcp"], "enabled": true }
   }
 }
 ```
@@ -120,7 +120,7 @@ gemini mcp add -s user fetchroam fetchroam mcp
 ```json
 {
   "mcpServers": {
-    "fetchroam": { "command": "fetchroam", "args": ["mcp"] }
+    "anyfetch": { "command": "anyfetch", "args": ["mcp"] }
   }
 }
 ```
@@ -129,23 +129,23 @@ gemini mcp add -s user fetchroam fetchroam mcp
 
 | Harness | Command |
 | --- | --- |
-| Cline | `cline mcp add fetchroam --yes -- fetchroam mcp` |
-| Amp | `amp mcp add fetchroam -- fetchroam mcp` |
-| OpenClaw | `openclaw mcp add fetchroam --command fetchroam --arg mcp` |
-| Goose | `goose session --with-extension "fetchroam mcp"` |
-| VS Code (Copilot) | `code --add-mcp "{\"name\":\"fetchroam\",\"command\":\"fetchroam\",\"args\":[\"mcp\"]}"` |
+| Cline | `cline mcp add anyfetch --yes -- anyfetch mcp` |
+| Amp | `amp mcp add anyfetch -- anyfetch mcp` |
+| OpenClaw | `openclaw mcp add anyfetch --command anyfetch --arg mcp` |
+| Goose | `goose session --with-extension "anyfetch mcp"` |
+| VS Code (Copilot) | `code --add-mcp "{\"name\":\"anyfetch\",\"command\":\"anyfetch\",\"args\":[\"mcp\"]}"` |
 
-Any other MCP client: add a stdio server with the command `fetchroam` and the argument `mcp`.
+Any other MCP client: add a stdio server with the command `anyfetch` and the argument `mcp`.
 
 **No MCP?** Give the agent the CLI. Add this to `AGENTS.md` or the harness's instruction file:
 
 ```markdown
 ## Web access
-- Search the web: `fetchroam search "<query>"`
-- Read pages: `fetchroam fetch <url> [<url>...] --format markdown`
+- Search the web: `anyfetch search "<query>"`
+- Read pages: `anyfetch fetch <url> [<url>...] --format markdown`
 ```
 
-**Make it the default.** To have the agent use Fetchroam and not its built-in tools, turn the built-ins off:
+**Make it the default.** To have the agent use Anyfetch and not its built-in tools, turn the built-ins off:
 
 - Claude Code, in `~/.claude/settings.json`: `"permissions": { "deny": ["WebFetch", "WebSearch"] }`
 - Codex, in `~/.codex/config.toml`: `web_search = "disabled"`
@@ -153,14 +153,14 @@ Any other MCP client: add a stdio server with the command `fetchroam` and the ar
 ## Use it from the command line
 
 ```sh
-fetchroam search "rust async runtime comparison"
-fetchroam search "tokio select" --site docs.rs --time year
-fetchroam search "postgres vacuum freeze" --read 3
-fetchroam search "retrieval augmented generation" --provider papers
-fetchroam fetch https://stackoverflow.com/questions/231767 --format markdown
-fetchroam fetch https://arxiv.org/pdf/1706.03762 --max-chars 8000 --offset 8000
-fetchroam fetch https://docs.python.org/3.15/whatsnew/3.15.html --query "sampling profiler rate"
-fetchroam fetch https://www.rust-lang.org/ https://go.dev/ https://ziglang.org/
+anyfetch search "rust async runtime comparison"
+anyfetch search "tokio select" --site docs.rs --time year
+anyfetch search "postgres vacuum freeze" --read 3
+anyfetch search "retrieval augmented generation" --provider papers
+anyfetch fetch https://stackoverflow.com/questions/231767 --format markdown
+anyfetch fetch https://arxiv.org/pdf/1706.03762 --max-chars 8000 --offset 8000
+anyfetch fetch https://docs.python.org/3.15/whatsnew/3.15.html --query "sampling profiler rate"
+anyfetch fetch https://www.rust-lang.org/ https://go.dev/ https://ziglang.org/
 ```
 
 Output is JSON by default, so scripts and agents can parse it. `--format markdown` prints only the page content.
@@ -238,10 +238,10 @@ A failed call returns an `error` object with a `code` the agent can act on:
 
 ## Cloudflare checks
 
-Some sites answer every first request with a JavaScript check. Fetchroam handles it in two steps:
+Some sites answer every first request with a JavaScript check. Anyfetch handles it in two steps:
 
 1. Your own Firefox passes the check once. It runs hidden, with a throwaway profile, for a few seconds.
-2. Fetchroam saves the clearance for that site and goes back to plain requests. On Medium, one pass is good for a year.
+2. Anyfetch saves the clearance for that site and goes back to plain requests. On Medium, one pass is good for a year.
 
 In our test, the first page of such a site took about 5 seconds and the next one under 2 seconds.
 
@@ -249,31 +249,31 @@ This needs Firefox, or a Firefox-based browser, on the machine. Without one, not
 
 | Setting | Effect |
 | --- | --- |
-| `FETCHROAM_BROWSER=off` | Never start a browser. |
-| `FETCHROAM_BROWSER=/path/to/browser` | Use this Firefox-based browser. |
+| `ANYFETCH_BROWSER=off` | Never start a browser. |
+| `ANYFETCH_BROWSER=/path/to/browser` | Use this Firefox-based browser. |
 
 For an MCP server, set the variable in the server entry. In Claude Code:
 
 ```sh
-claude mcp add --scope user fetchroam -e FETCHROAM_BROWSER=off -- fetchroam mcp
+claude mcp add --scope user anyfetch -e ANYFETCH_BROWSER=off -- anyfetch mcp
 ```
 
 Notes:
 
-- Tested on Linux. On Windows, and for a snap-packaged Firefox (the Ubuntu default), the browser is used only when `FETCHROAM_BROWSER` names it.
+- Tested on Linux. On Windows, and for a snap-packaged Firefox (the Ubuntu default), the browser is used only when `ANYFETCH_BROWSER` names it.
 - A clearance belongs to the address that earned it, so the browser is not used together with a proxy.
-- Saved clearances are in `~/.config/fetchroam/clearance/`. Delete a file to forget a site.
+- Saved clearances are in `~/.config/anyfetch/clearance/`. Delete a file to forget a site.
 
 ## Pages that need their scripts
 
-Most pages give Fetchroam their text without JavaScript: it is in the HTML, in the page's data, or behind a public API. A few hold nothing until their scripts run. MSN, Spotify and Airbnb are examples. For those, Fetchroam can use [Lightpanda](https://github.com/lightpanda-io/browser), a small headless engine without a full browser.
+Most pages give Anyfetch their text without JavaScript: it is in the HTML, in the page's data, or behind a public API. A few hold nothing until their scripts run. MSN, Spotify and Airbnb are examples. For those, Anyfetch can use [Lightpanda](https://github.com/lightpanda-io/browser), a small headless engine without a full browser.
 
-Lightpanda is optional and separate. Install it from its README, put `lightpanda` on your `PATH`, and Fetchroam uses it for the pages that need it. In our test, MSN went from no content to 154,000 characters in 12 seconds, and Spotify from no content to 23,000 characters in 3 seconds. Pages that already work are not rendered, so they stay fast.
+Lightpanda is optional and separate. Install it from its README, put `lightpanda` on your `PATH`, and Anyfetch uses it for the pages that need it. In our test, MSN went from no content to 154,000 characters in 12 seconds, and Spotify from no content to 23,000 characters in 3 seconds. Pages that already work are not rendered, so they stay fast.
 
 | Setting | Effect |
 | --- | --- |
-| `FETCHROAM_RENDERER=off` | Never start the renderer. |
-| `FETCHROAM_RENDERER=/path/to/lightpanda` | Use this program. |
+| `ANYFETCH_RENDERER=off` | Never start the renderer. |
+| `ANYFETCH_RENDERER=/path/to/lightpanda` | Use this program. |
 
 Notes:
 
@@ -282,29 +282,29 @@ Notes:
 
 ## Use a proxy
 
-Some sites refuse cloud server addresses whatever the request looks like. If your agent runs on a server, send Fetchroam through a residential proxy. Put one line in `~/.config/fetchroam/proxy`:
+Some sites refuse cloud server addresses whatever the request looks like. If your agent runs on a server, send Anyfetch through a residential proxy. Put one line in `~/.config/anyfetch/proxy`:
 
 ```
 host:port:username:password
 ```
 
-Fetchroam then sends every search and fetch through that HTTP proxy. The file holds the password in plain text, so keep it private: `chmod 600 ~/.config/fetchroam/proxy`. Delete the file to go direct again.
+Anyfetch then sends every search and fetch through that HTTP proxy. The file holds the password in plain text, so keep it private: `chmod 600 ~/.config/anyfetch/proxy`. Delete the file to go direct again.
 
 ## What it does not do
 
-Fetchroam itself does not run JavaScript, solve CAPTCHAs or log in. A page that shows its content only after its scripts run, with no data inside the HTML and no public API, returns its title and description unless Lightpanda is installed. Pages behind a CAPTCHA, a paywall or a sign-in wall stay closed, and Fetchroam says so with an error code.
+Anyfetch itself does not run JavaScript, solve CAPTCHAs or log in. A page that shows its content only after its scripts run, with no data inside the HTML and no public API, returns its title and description unless Lightpanda is installed. Pages behind a CAPTCHA, a paywall or a sign-in wall stay closed, and Anyfetch says so with an error code.
 
 ## Benchmark
 
 The numbers at the top come from two scripts in [`bench/`](bench).
 
-- **Pages read.** `bench/bench.py` reads each of the 97 sites in [`bench/sites.txt`](bench/sites.txt) once with each tool. A page counts as read when the tool returns at least 500 characters of text and the text is not a bot check. The same rule is applied to every tool. Fetchroam ran three times and read 73, 76 and 75 pages; the table shows the middle run. Claude Code's `WebFetch` cannot be scripted, so an agent called it once per site and recorded if real content came back.
+- **Pages read.** `bench/bench.py` reads each of the 97 sites in [`bench/sites.txt`](bench/sites.txt) once with each tool. A page counts as read when the tool returns at least 500 characters of text and the text is not a bot check. The same rule is applied to every tool. Anyfetch ran three times and read 73, 76 and 75 pages; the table shows the middle run. Claude Code's `WebFetch` cannot be scripted, so an agent called it once per site and recorded if real content came back.
 - **Time and memory.** `bench/speed.py` reads 10 pages with each program, started fresh for every page, and reports the median.
 
 The per-site results are in [`bench/results/`](bench/results). Sites change their rules often, and results differ between networks, so run it yourself:
 
 ```sh
-python3 bench/bench.py fetchroam curl
+python3 bench/bench.py anyfetch curl
 pip install mcp-server-fetch && python3 bench/bench.py reference
 python3 bench/speed.py /path/to/chromium
 ```
@@ -314,7 +314,7 @@ python3 bench/speed.py /path/to/chromium
 You need Rust 1.98, `cmake` and `clang` (the TLS library is BoringSSL). On Windows you also need NASM.
 
 ```sh
-cargo install --git https://github.com/aliasmode/fetchroam
+cargo install --git https://github.com/aliasmode/anyfetch
 ```
 
 ## License

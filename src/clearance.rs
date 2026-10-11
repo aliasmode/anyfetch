@@ -37,10 +37,10 @@ pub struct Cookie {
     pub domain: String,
 }
 
-/// The Firefox-based browser to use, or `None` when clearance is off. `FETCHROAM_BROWSER=off`
-/// turns it off; `FETCHROAM_BROWSER=<path>` selects a browser; otherwise Firefox is looked up.
+/// The Firefox-based browser to use, or `None` when clearance is off. `ANYFETCH_BROWSER=off`
+/// turns it off; `ANYFETCH_BROWSER=<path>` selects a browser; otherwise Firefox is looked up.
 pub fn browser() -> Option<PathBuf> {
-    match std::env::var_os("FETCHROAM_BROWSER") {
+    match std::env::var_os("ANYFETCH_BROWSER") {
         Some(value) if value == "off" => None,
         Some(value) if !value.is_empty() => Some(value.into()),
         _ => installed(),
@@ -48,7 +48,7 @@ pub fn browser() -> Option<PathBuf> {
 }
 
 // The Windows launcher detaches from the browser it starts, which this code has not been tested
-// to stop again. Windows users opt in with FETCHROAM_BROWSER.
+// to stop again. Windows users opt in with ANYFETCH_BROWSER.
 #[cfg(windows)]
 fn installed() -> Option<PathBuf> {
     None
@@ -78,7 +78,7 @@ fn now() -> u64 {
 }
 
 fn store(host: &str) -> Option<PathBuf> {
-    let directory = std::env::home_dir()?.join(".config/fetchroam/clearance");
+    let directory = std::env::home_dir()?.join(".config/anyfetch/clearance");
     Some(directory.join(format!("{host}.json")))
 }
 
@@ -139,7 +139,7 @@ pub async fn obtain(browser: &Path, url: &str) -> Result<Clearance, ToolError> {
         .duration_since(UNIX_EPOCH)
         .map_or(0, |d| d.as_nanos());
     let scratch = Scratch(
-        std::env::temp_dir().join(format!("fetchroam-browser-{}-{unique}", std::process::id())),
+        std::env::temp_dir().join(format!("anyfetch-browser-{}-{unique}", std::process::id())),
     );
     let profile = scratch.0.join("profile");
     std::fs::create_dir_all(&profile).map_err(|_| failed("Could not create a browser profile"))?;
@@ -262,7 +262,7 @@ mod tests {
             (1_900_000_000_123, 1_900_000_000),
         ] {
             let scratch = Scratch(std::env::temp_dir().join(format!(
-                "fetchroam-cookie-test-{}-{expiry}",
+                "anyfetch-cookie-test-{}-{expiry}",
                 std::process::id()
             )));
             let profile = scratch.0.join("profile");

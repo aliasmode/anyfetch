@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Time and peak memory to read a page: fetchroam against a headless Chromium (Linux only).
+"""Time and peak memory to read a page: anyfetch against a headless Chromium (Linux only).
 
 Usage: python3 bench/speed.py /path/to/chromium-or-headless_shell
 Each page is read once by each program, started fresh, as an agent tool call would.
@@ -62,7 +62,7 @@ def median(values):
 def main():
     chromium = sys.argv[1]
     programs = {
-        "fetchroam": lambda url: ["fetchroam", "fetch", "--fresh", url],
+        "anyfetch": lambda url: ["anyfetch", "fetch", "--fresh", url],
         "headless Chromium": lambda url: [chromium, "--headless", "--no-sandbox", "--disable-gpu", "--dump-dom", url],
     }
     for name, command in programs.items():

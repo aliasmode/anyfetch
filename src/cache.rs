@@ -11,7 +11,7 @@ use std::{
 const LIFETIME: Duration = Duration::from_secs(15 * 60);
 
 fn directory() -> Option<PathBuf> {
-    Some(std::env::home_dir()?.join(".cache/fetchroam/pages"))
+    Some(std::env::home_dir()?.join(".cache/anyfetch/pages"))
 }
 
 fn fresh(path: &Path) -> bool {
@@ -62,7 +62,7 @@ mod tests {
     #[test]
     fn returns_a_stored_page_for_the_same_url_only() {
         let directory =
-            std::env::temp_dir().join(format!("fetchroam-cache-test-{}", std::process::id()));
+            std::env::temp_dir().join(format!("anyfetch-cache-test-{}", std::process::id()));
         let page = FetchResponse {
             requested_url: "https://example.org/a".into(),
             url: "https://example.org/a".into(),

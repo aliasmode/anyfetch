@@ -15,7 +15,7 @@ struct Session {
 
 impl Session {
     async fn start() -> Self {
-        let mut child = Command::new(env!("CARGO_BIN_EXE_fetchroam"))
+        let mut child = Command::new(env!("CARGO_BIN_EXE_anyfetch"))
             .arg("mcp")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -34,13 +34,13 @@ impl Session {
             .send(
                 json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{
                     "protocolVersion":"2025-11-25","capabilities":{},
-                    "clientInfo":{"name":"fetchroam-test","version":"1"}
+                    "clientInfo":{"name":"anyfetch-test","version":"1"}
                 }}),
             )
             .await;
         let initialized = session.receive().await;
         assert_eq!(initialized["id"], 1);
-        assert_eq!(initialized["result"]["serverInfo"]["name"], "fetchroam");
+        assert_eq!(initialized["result"]["serverInfo"]["name"], "anyfetch");
         session
             .send(json!({"jsonrpc":"2.0","method":"notifications/initialized"}))
             .await;

@@ -5,7 +5,7 @@ A page counts as read when the tool returns at least 500 characters of text and 
 look like a bot check. The same rule is applied to every tool.
 
 Usage:
-  python3 bench/bench.py fetchroam curl            # tools to run, in order
+  python3 bench/bench.py anyfetch curl            # tools to run, in order
   python3 bench/bench.py reference                 # needs: pip install mcp-server-fetch
 Results go to bench/results/<tool>.tsv and a summary is printed. BENCH_THREADS sets how many
 sites are read at the same time (default 8).
@@ -39,8 +39,8 @@ def strip_html(markup):
     return re.sub(r"\s+", " ", html.unescape(re.sub(r"(?s)<[^>]+>", " ", markup))).strip()
 
 
-def fetchroam(url):
-    done = subprocess.run(["fetchroam", "fetch", "--fresh", "--max-chars", "200000", url],
+def anyfetch(url):
+    done = subprocess.run(["anyfetch", "fetch", "--fresh", "--max-chars", "200000", url],
                           capture_output=True, text=True, timeout=120)
     page = json.loads(done.stdout or "{}")
     if "error" in page:
@@ -75,7 +75,7 @@ def reference(url, ignore_robots=False):
 
 
 TOOLS = {
-    "fetchroam": fetchroam,
+    "anyfetch": anyfetch,
     "curl": curl,
     "reference": reference,
     "reference-ignore-robots": lambda url: reference(url, ignore_robots=True),

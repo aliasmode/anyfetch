@@ -1,5 +1,5 @@
+use anyfetch::{fetch, search};
 use clap::{Parser, Subcommand, ValueEnum};
-use fetchroam::{fetch, search};
 use serde_json::json;
 use std::{io::Write, process::ExitCode};
 
@@ -76,7 +76,7 @@ async fn main() -> ExitCode {
     );
     let result = match cli.command {
         Command::Mcp => {
-            return match fetchroam::mcp::serve().await {
+            return match anyfetch::mcp::serve().await {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(error) => {
                     eprintln!("{error}");

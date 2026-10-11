@@ -1,4 +1,4 @@
-use fetchroam::fetch::fetch;
+use anyfetch::fetch::fetch;
 use std::{
     io::{BufRead, BufReader, Write},
     net::TcpListener,

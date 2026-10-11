@@ -8,7 +8,7 @@ use tokio::{
 };
 
 fn command() -> Command {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_fetchroam"));
+    let mut command = Command::new(env!("CARGO_BIN_EXE_anyfetch"));
     command
         .arg("search")
         .kill_on_drop(true)
@@ -69,8 +69,8 @@ async fn cli_uses_the_selected_searxng_instance() {
 #[tokio::test]
 async fn cli_sends_requests_through_the_proxy_file() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let home = std::env::temp_dir().join(format!("fetchroam-proxy-{}", std::process::id()));
-    let config = home.join(".config/fetchroam");
+    let home = std::env::temp_dir().join(format!("anyfetch-proxy-{}", std::process::id()));
+    let config = home.join(".config/anyfetch");
     std::fs::create_dir_all(&config).unwrap();
     let proxy = format!("{}:user:pa:ss\n", listener.local_addr().unwrap());
     std::fs::write(config.join("proxy"), proxy).unwrap();
@@ -107,8 +107,8 @@ async fn cli_sends_requests_through_the_proxy_file() {
 async fn cli_fetch_sends_a_saved_clearance_for_the_site() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}/", listener.local_addr().unwrap());
-    let home = std::env::temp_dir().join(format!("fetchroam-clearance-{}", std::process::id()));
-    let store = home.join(".config/fetchroam/clearance");
+    let home = std::env::temp_dir().join(format!("anyfetch-clearance-{}", std::process::id()));
+    let store = home.join(".config/anyfetch/clearance");
     std::fs::create_dir_all(&store).unwrap();
     let saved = r#"{"user_agent":"FakeFox/1.0","expires":4000000000,
         "cookies":[{"name":"cf_clearance","value":"pass","domain":"127.0.0.1"}]}"#;
@@ -124,11 +124,11 @@ async fn cli_fetch_sends_a_saved_clearance_for_the_site() {
     });
     let output = timeout(
         Duration::from_secs(10),
-        Command::new(env!("CARGO_BIN_EXE_fetchroam"))
+        Command::new(env!("CARGO_BIN_EXE_anyfetch"))
             .args(["fetch", &url])
             .env("HOME", &home)
             .env("USERPROFILE", &home)
-            .env("FETCHROAM_BROWSER", "off")
+            .env("ANYFETCH_BROWSER", "off")
             .kill_on_drop(true)
             .output(),
     )
@@ -164,7 +164,7 @@ async fn cli_fetch_renders_a_page_that_has_no_text_without_its_scripts() {
     use std::os::unix::fs::PermissionsExt;
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}/app", listener.local_addr().unwrap());
-    let home = std::env::temp_dir().join(format!("fetchroam-render-{}", std::process::id()));
+    let home = std::env::temp_dir().join(format!("anyfetch-render-{}", std::process::id()));
     std::fs::create_dir_all(&home).unwrap();
     let renderer = home.join("renderer");
     std::fs::write(&renderer, FAKE_RENDERER).unwrap();
@@ -180,11 +180,11 @@ async fn cli_fetch_renders_a_page_that_has_no_text_without_its_scripts() {
     });
     let output = timeout(
         Duration::from_secs(10),
-        Command::new(env!("CARGO_BIN_EXE_fetchroam"))
+        Command::new(env!("CARGO_BIN_EXE_anyfetch"))
             .args(["fetch", &url])
             .env("HOME", &home)
-            .env("FETCHROAM_BROWSER", "off")
-            .env("FETCHROAM_RENDERER", &renderer)
+            .env("ANYFETCH_BROWSER", "off")
+            .env("ANYFETCH_RENDERER", &renderer)
             .kill_on_drop(true)
             .output(),
     )
