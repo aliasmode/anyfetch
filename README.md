@@ -18,7 +18,7 @@ Anyfetch read 21 sites that no other tool in the table could read. Among them: T
 | **Agent with Anyfetch** | **30** |
 | Same agent with Claude Code built-in `WebSearch` and `WebFetch` | 25 |
 
-Ten of the questions are about a page on a site that blocks AI agents. The built-in fetch could not read any of those 10 pages. Its search found the answer in another source for 5 of them. Anyfetch read all 10.
+Ten of the questions are about a page on a site that blocks AI agents. The built-in fetch could not read any of those 10 pages. Its search found the answer in another source for 5 of them. Anyfetch read all 10. The questions were written from pages that Anyfetch can read, so this group shows what the built-in tools miss.
 
 | One page, started fresh | Time | Peak memory |
 | --- | --- | --- |
@@ -316,7 +316,7 @@ The numbers at the top come from two scripts and one question set in [`bench/`](
 | A page on an open site | 10 of 10 | 10 of 10 |
 | No URL: search first, then read | 10 of 10 | 10 of 10 |
 
-In each single run the built-in tools answered 26 questions, but not the same 26. Three things to know about this test. The question writer used Anyfetch to check each answer, so the first group has only pages that Anyfetch can read. Four more sites on the writer's list (Reuters, Bloomberg, Financial Times and Quora) have no question, because it could not read an article there. One Anyfetch test agent stopped after its first question, so its 5 questions were run again. Every answer is in [`bench/results/tasks.tsv`](bench/results/tasks.tsv).
+In each single run the built-in tools answered 26 questions, but not the same 26. Three things to know about this test. The question writer used Anyfetch to check each answer, so the first group has only pages that Anyfetch can read. Four more sites on the writer's list (Reuters, Bloomberg, Financial Times and Quora) have no question, because it could not read an article page there. The site test above reads the home page of Reuters and Bloomberg, which Anyfetch can read. One Anyfetch test agent stopped after its first question, so its 5 questions were run again. Every answer is in [`bench/results/tasks.tsv`](bench/results/tasks.tsv).
 
 The per-site results are in [`bench/results/`](bench/results). Sites change their rules often, and results differ between networks, so run it yourself:
 

@@ -139,16 +139,20 @@ fn blocks(content: &str, limit: usize) -> Vec<Block> {
     // The open headings with their levels.
     let mut headings: Vec<(usize, String)> = Vec::new();
     let mut paragraphs = paragraphs(content).into_iter().peekable();
-    while let Some(lines) = paragraphs.next() {
-        if let Some(level) = level(&lines) {
+    while let Some(mut lines) = paragraphs.next() {
+        // A heading stands alone, or directly above its text in Markdown that is served as
+        // written.
+        if let Some(level) = level(lines[0]) {
             headings.retain(|(open, _)| *open < level);
-            headings.push((level, lines[0].to_owned()));
-            continue;
+            headings.push((level, lines.remove(0).to_owned()));
+            if lines.is_empty() {
+                continue;
+            }
         }
         let mut text = lines.join("\n");
         // A sentence that ends with a colon introduces the paragraph after it.
         while text.ends_with(':')
-            && let Some(next) = paragraphs.next_if(|next| level(next).is_none())
+            && let Some(next) = paragraphs.next_if(|next| level(next[0]).is_none())
         {
             text = format!("{text}\n\n{}", next.join("\n"));
         }
@@ -179,9 +183,8 @@ fn paragraphs(content: &str) -> Vec<Vec<&str>> {
     paragraphs
 }
 
-/// The level of a heading paragraph: the number of `#`, or 1 for the page label of a PDF.
-fn level(lines: &[&str]) -> Option<usize> {
-    let [line] = lines else { return None };
+/// The level of a heading line: the number of `#`, or 1 for the page label of a PDF.
+fn level(line: &str) -> Option<usize> {
     let marks = line.bytes().take_while(|byte| *byte == b'#').count();
     if (1..=6).contains(&marks) && line[marks..].starts_with(' ') {
         Some(marks)
@@ -255,6 +258,9 @@ mod tests {
             "{focused}"
         );
         assert!(focused.ends_with("[...]"));
+        let raw = page.replace("## Timeouts\n\n", "## Timeouts\n");
+        let focused = focus(&raw, "What is the default timeout?", 400).unwrap();
+        assert!(focused.contains("## Timeouts\n\nThe default is 30 seconds."));
         assert!(!focused.contains("## Retries") && !focused.contains("## Proxies"));
         for budget in [60, 150, 400, 900, 2_000] {
             let focused = focus(&page, "default timeout sentence proxies", budget);
