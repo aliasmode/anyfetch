@@ -1,4 +1,4 @@
-use crate::{ToolError, alternates, cache, pdf, render, transport};
+use crate::{ToolError, alternates, cache, focus, pdf, render, transport};
 use dom_query::{Document, NodeRef};
 use dom_smoothie::Readability;
 use encoding_rs::{Encoding, UTF_8};
@@ -12,6 +12,10 @@ use std::{
 /// Content characters returned when the caller does not ask for a number. Larger answers
 /// overflow the tool-output limit of common agent harnesses.
 pub const DEFAULT_MAX_CHARS: usize = 50_000;
+
+/// Content characters returned for a query when the caller does not ask for a number: enough
+/// for the matching parts of a page, and a tenth of a whole page.
+pub const DEFAULT_QUERY_CHARS: usize = 5_000;
 
 #[derive(Debug, Serialize)]
 pub struct Extracted {
@@ -33,6 +37,9 @@ pub struct FetchResponse {
     pub description: Option<String>,
     pub total_chars: usize,
     pub content: String,
+    /// `content` holds only the parts of the page that match the query.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub focused: bool,
 }
 
 impl FetchResponse {
@@ -40,6 +47,22 @@ impl FetchResponse {
     pub fn window(mut self, offset: usize, max_chars: usize) -> Self {
         self.content = self.content.chars().skip(offset).take(max_chars).collect();
         self
+    }
+
+    /// Keeps the parts of the content that match `query`, at most `max_chars` characters. A
+    /// page with no match keeps its first `max_chars`, and so does data such as JSON, which is
+    /// of no use in parts.
+    pub fn focus(mut self, query: &str, max_chars: usize) -> Self {
+        let kind = &self.content_type;
+        let data = (kind.contains("json") || kind.contains("xml")) && !kind.contains("html");
+        match focus::focus(&self.content, query, max_chars).filter(|_| !data) {
+            Some(content) => {
+                self.content = content;
+                self.focused = true;
+                self
+            }
+            None => self.window(0, max_chars),
+        }
     }
 }
 
@@ -110,19 +133,24 @@ pub async fn fetch_many(
 }
 
 /// The JSON answer for several pages: each entry is the page, cut to `max_chars`, or its error.
-/// Without `max_chars`, the pages share [`DEFAULT_MAX_CHARS`].
+/// Without `max_chars`, the pages share [`DEFAULT_MAX_CHARS`]. With a `query`, each page keeps
+/// only the parts that match it, [`DEFAULT_QUERY_CHARS`] without `max_chars`.
 pub fn pages(
     urls: &[String],
     results: Vec<Result<FetchResponse, ToolError>>,
     max_chars: Option<usize>,
+    query: Option<&str>,
 ) -> serde_json::Value {
-    let max_chars = max_chars.unwrap_or(DEFAULT_MAX_CHARS / urls.len().max(1));
+    let share = DEFAULT_MAX_CHARS / urls.len().max(1);
     let entries: Vec<_> = urls
         .iter()
         .zip(results)
-        .map(|(url, result)| match result {
-            Ok(page) => serde_json::json!(page.window(0, max_chars)),
-            Err(error) => serde_json::json!({ "requested_url": url, "error": error }),
+        .map(|(url, result)| match (result, query) {
+            (Ok(page), Some(query)) => {
+                serde_json::json!(page.focus(query, max_chars.unwrap_or(DEFAULT_QUERY_CHARS)))
+            }
+            (Ok(page), None) => serde_json::json!(page.window(0, max_chars.unwrap_or(share))),
+            (Err(error), _) => serde_json::json!({ "requested_url": url, "error": error }),
         })
         .collect();
     serde_json::json!({ "pages": entries })
@@ -142,6 +170,7 @@ async fn download(url: &str, options: Options<'_>) -> Result<FetchResponse, Tool
             description: None,
             total_chars: page.content.chars().count(),
             content: page.content,
+            focused: false,
         });
     }
     let response = transport::get_page(url, supported, options.browser).await?;
@@ -210,6 +239,7 @@ async fn download(url: &str, options: Options<'_>) -> Result<FetchResponse, Tool
         description,
         total_chars: content.chars().count(),
         content,
+        focused: false,
     })
 }
 

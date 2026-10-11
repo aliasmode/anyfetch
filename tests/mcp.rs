@@ -128,6 +128,7 @@ async fn stdio_exposes_two_tools_and_preserves_results_and_errors() {
                 json!([
                     "auto",
                     "brave",
+                    "yahoo",
                     "duckduckgo",
                     "searxng",
                     "github",

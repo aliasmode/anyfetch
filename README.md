@@ -22,8 +22,9 @@ Measured on 2026-10-11 from a cloud server, with no proxy. See [how we measured]
 
 ## What your agent gets
 
-- **Search with no key.** Brave and DuckDuckGo results, with domain and date filters, quoted phrases and paging. Specialist sources for GitHub, Stack Overflow, Hacker News, arXiv and research papers. Or your own SearXNG.
-- **Search and read in one call.** Ask for the content of the top results together with the result list.
+- **Search with no key.** Brave, Yahoo and DuckDuckGo results, with domain and date filters, quoted phrases and paging. Specialist sources for GitHub, Stack Overflow, Hacker News, arXiv and research papers. Or your own SearXNG.
+- **Search and read in one call.** Ask for the top results together with the result list, and get the parts of each page that match your query.
+- **Answers, not whole pages.** Give a question with the URL, and get only the parts of the page that match it. The Python 3.15 release notes are 218,000 characters; the answer to one question about them came back in 2,200.
 - **Clean Markdown.** Links, tables and code blocks stay intact. Long pages come in parts.
 - **PDFs.** Papers and reports come back as text, page by page.
 - **Sites that need JavaScript.** Fetchroam reads the data inside the page, and uses the site's public API or feed for Stack Overflow, Reddit, X posts, PyPI and crates.io. No browser runs. For pages that hold nothing without their scripts, it can use Lightpanda, an optional small engine.
@@ -158,6 +159,7 @@ fetchroam search "postgres vacuum freeze" --read 3
 fetchroam search "retrieval augmented generation" --provider papers
 fetchroam fetch https://stackoverflow.com/questions/231767 --format markdown
 fetchroam fetch https://arxiv.org/pdf/1706.03762 --max-chars 8000 --offset 8000
+fetchroam fetch https://docs.python.org/3.15/whatsnew/3.15.html --query "sampling profiler rate"
 fetchroam fetch https://www.rust-lang.org/ https://go.dev/ https://ziglang.org/
 ```
 
@@ -170,11 +172,14 @@ Output is JSON by default, so scripts and agents can parse it. `--format markdow
 | Input | Meaning |
 | --- | --- |
 | `url` | The page to read. |
-| `max_chars` | Optional. The most content characters to return. The default is 50,000. |
-| `offset` | Optional. The first content character to return. |
+| `query` | Optional. A question or keywords. The result has only the parts of the page that match. |
+| `max_chars` | Optional. The most content characters to return. The default is 50,000, or 5,000 with a `query`. |
+| `offset` | Optional. The first content character to return. Not used with a `query`. |
 | `fresh` | Optional. Fetch again even if a copy from the last 15 minutes exists. |
 
 The result has `title`, `description`, `content` (Markdown), `total_chars`, `url` (after redirects), `status` and `retrieved_at`. To read a long page in parts, call again with a higher `offset` until it reaches `total_chars`. The parts come from the local copy, so the site gets one request.
+
+With a `query`, the page is split at its paragraphs, tables and code blocks. The parts that best match the words of the query come back in page order, under their headings, with `[...]` where parts are left out. The result then has `focused: true`. A page with no matching part comes back from its start. A second question about the same page uses the local copy.
 
 HTML becomes Markdown. A PDF becomes text with `[Page N]` marks. JSON, plain text and XML feeds come back as they are.
 
@@ -183,6 +188,7 @@ HTML becomes Markdown. A PDF becomes text with `[Page N]` marks. JSON, plain tex
 | Input | Meaning |
 | --- | --- |
 | `urls` | The pages to read. They are fetched at the same time. |
+| `query` | Optional. As for `web_fetch`. Each page gives up to 5,000 characters. |
 | `max_chars` | Optional. The most content characters per page. By default the pages share 50,000. |
 | `fresh` | Optional. As for `web_fetch`. |
 
@@ -197,15 +203,16 @@ The result has `pages`: one entry per URL, in order. Each entry is the page, or 
 | `site` | Optional. Keep results from one domain, for example `docs.rs`. |
 | `time` | Optional. `day`, `week`, `month` or `year`. |
 | `page` | Optional. The result page, from 1. |
-| `read` | Optional. Also return the page content of this many top results. |
+| `read` | Optional. Also return, from this many top results, the parts of each page that match the query. |
 | `searxng_url` | The base URL of your SearXNG instance, for the `searxng` provider. It must have JSON output on. |
 
 Each result has `title`, `url` and `snippet`, and `content` when you set `read`.
 
 | Provider | Source |
 | --- | --- |
-| `auto` | Brave, then DuckDuckGo when Brave gives no results. |
+| `auto` | Brave, then Yahoo, then DuckDuckGo: each one when the one before gives no results. |
 | `brave` | Brave Search. About 20 results per page. |
+| `yahoo` | Yahoo Search. 7 results per page. No `year` filter. |
 | `duckduckgo` | DuckDuckGo. First page only. |
 | `searxng` | Your own SearXNG instance. |
 | `github` | GitHub repositories, with stars and language. |

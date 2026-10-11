@@ -3,6 +3,7 @@ mod anubis;
 mod cache;
 pub mod clearance;
 pub mod fetch;
+mod focus;
 pub mod mcp;
 mod pdf;
 pub mod render;

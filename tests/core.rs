@@ -1,6 +1,6 @@
 use fetchroam::{
     fetch::extract,
-    search::{parse_brave, parse_duckduckgo, parse_searxng},
+    search::{parse_brave, parse_duckduckgo, parse_searxng, parse_yahoo},
 };
 
 #[test]
@@ -211,4 +211,20 @@ fn extraction_keeps_wrapped_and_line_split_code_blocks() {
     assert!(content.contains("```bash\ntool add one\n\ntool run\n```"));
     assert!(content.contains("```json\n{\n  \"a\": 1\n}\n```"));
     assert!(content.contains("```sh\nfirst\nsecond cmd\nthird\n```"));
+}
+
+#[test]
+fn yahoo_returns_the_destination_of_each_redirect_link() {
+    let html = r#"<ol><li><div class="dd fst algo algo-sr relsrch Sr"><div class="compTitle options-toggle">
+        <a href="https://r.search.yahoo.com/_ylt=A;_ylu=B/RV=2/RE=1/RO=10/RU=https%3a%2f%2fdocs.example.org%2fen%2f6.1%2f%3fa%3db%2bc/RK=2/RS=x-">
+        <div><span>Example</span>https://docs.example.org › en</div><h3 class="title"><span>Release notes</span></h3></a></div>
+        <div class="compText aAbs"><p><span>5 days ago · </span> Fixes <b>one</b> issue.</p></div></div></li>
+        <li><div class="dd algo"><div class="compTitle"><a href="https://search.yahoo.com/more"><h3>More</h3></a></div></div></li></ol>"#;
+    let hits = parse_yahoo(html, 200).unwrap();
+    assert_eq!(hits.len(), 1);
+    assert_eq!(hits[0].url, "https://docs.example.org/en/6.1/?a=b+c");
+    assert_eq!(hits[0].title, "Release notes");
+    assert_eq!(hits[0].snippet, "5 days ago · Fixes one issue.");
+    let error = parse_yahoo("<html><body>Sign in</body></html>", 200).unwrap_err();
+    assert_eq!(error.code, "unexpected_response");
 }

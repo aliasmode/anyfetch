@@ -14,7 +14,7 @@ struct Cli {
 enum Command {
     /// Serve the web tools over stdio MCP.
     Mcp,
-    /// Search without an API key. The default provider tries Brave, then DuckDuckGo.
+    /// Search without an API key. The default provider tries Brave, then Yahoo, then DuckDuckGo.
     Search {
         query: String,
         #[arg(long, value_enum, default_value_t = search::Provider::default())]
@@ -31,7 +31,7 @@ enum Command {
         /// Result page.
         #[arg(long, default_value_t = 1)]
         page: usize,
-        /// Also return the page content of this many top results.
+        /// Also return, from this many top results, the parts of each page that match the query.
         #[arg(long, default_value_t = 0)]
         read: usize,
     },
@@ -41,7 +41,11 @@ enum Command {
         urls: Vec<String>,
         #[arg(long, value_enum, default_value_t = Format::Json)]
         format: Format,
-        /// First content character to return, for one URL.
+        /// A question or keywords: return only the parts of each page that match, 5000
+        /// characters by default.
+        #[arg(long)]
+        query: Option<String>,
+        /// First content character to return, for one URL without a query.
         #[arg(long, default_value_t = 0)]
         offset: usize,
         /// Most content characters to return per page. The default is 50000, shared between
@@ -102,6 +106,7 @@ async fn main() -> ExitCode {
         }
         Command::Fetch {
             urls,
+            query,
             offset,
             max_chars,
             fresh,
@@ -109,7 +114,11 @@ async fn main() -> ExitCode {
         } => {
             let helpers = fetch::Helpers::find();
             let options = helpers.options(fresh);
-            if let [url] = urls.as_slice() {
+            if let ([url], Some(query)) = (urls.as_slice(), &query) {
+                let max_chars = max_chars.unwrap_or(fetch::DEFAULT_QUERY_CHARS);
+                let page = fetch::fetch_with(url, options).await;
+                page.map(|page| json!(page.focus(query, max_chars)))
+            } else if let [url] = urls.as_slice() {
                 let max_chars = max_chars.unwrap_or(fetch::DEFAULT_MAX_CHARS);
                 let page = fetch::fetch_with(url, options).await;
                 page.map(|page| {
@@ -124,7 +133,7 @@ async fn main() -> ExitCode {
                 })
             } else {
                 let pages = fetch::fetch_many(&urls, options).await;
-                Ok(fetch::pages(&urls, pages, max_chars))
+                Ok(fetch::pages(&urls, pages, max_chars, query.as_deref()))
             }
         }
     };

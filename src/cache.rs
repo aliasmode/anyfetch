@@ -72,6 +72,7 @@ mod tests {
             title: Some("A".into()),
             description: None,
             total_chars: 5,
+            focused: false,
             content: "hello".into(),
         };
         write(&directory, &page);

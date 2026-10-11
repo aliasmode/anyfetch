@@ -13,10 +13,11 @@ use url::Url;
 pub enum Provider {
     // Plain comments here: a documented variant turns the tool's JSON schema from a simple
     // list of names into a list of objects, which some agent harnesses read badly.
-    // Brave, then DuckDuckGo when Brave gives no results.
+    // Brave, then Yahoo, then DuckDuckGo: each one when the one before gives no results.
     #[default]
     Auto,
     Brave,
+    Yahoo,
     Duckduckgo,
     Searxng,
     // Repositories on GitHub.
@@ -59,6 +60,7 @@ impl Provider {
         match self {
             Self::Auto => "auto",
             Self::Brave => "brave",
+            Self::Yahoo => "yahoo",
             Self::Duckduckgo => "duckduckgo",
             Self::Searxng => "searxng",
             Self::Github => "github",
@@ -89,6 +91,19 @@ impl Provider {
                     pairs.push(("offset", (page - 1).to_string()));
                 }
                 ("https://search.brave.com/search", pairs)
+            }
+            Self::Yahoo => {
+                let mut pairs = vec![("p", with_site)];
+                match filters.time {
+                    Some(Time::Year) => return Err(invalid("Yahoo has no one-year filter")),
+                    Some(time) => pairs.push(("btf", ["d", "w", "m"][time as usize].into())),
+                    None => {}
+                }
+                if page > 1 {
+                    // A page has 7 results.
+                    pairs.push(("b", ((page - 1) * 7 + 1).to_string()));
+                }
+                ("https://search.yahoo.com/search", pairs)
             }
             Self::Duckduckgo => {
                 if page > 1 {
@@ -228,11 +243,16 @@ pub async fn search_with(
     if provider != Provider::Auto {
         return ask(query, provider, searxng_url, filters).await;
     }
-    match ask(query, Provider::Brave, None, filters).await {
-        Ok(response) if !response.results.is_empty() => Ok(response),
-        // When Brave has no answer, DuckDuckGo's answer or error is the one to act on.
-        _ => ask(query, Provider::Duckduckgo, None, filters).await,
+    // Each engine refuses some requests, mostly after many in a short time.
+    for engine in [Provider::Brave, Provider::Yahoo] {
+        if let Ok(response) = ask(query, engine, None, filters).await
+            && !response.results.is_empty()
+        {
+            return Ok(response);
+        }
     }
+    // When the others have no answer, DuckDuckGo's answer or error is the one to act on.
+    ask(query, Provider::Duckduckgo, None, filters).await
 }
 
 async fn ask(
@@ -248,6 +268,7 @@ async fn ask(
         let mut results = match provider {
             Provider::Auto => unreachable!("auto is resolved to an engine before a request"),
             Provider::Brave => parse_brave(&body, response.status),
+            Provider::Yahoo => parse_yahoo(&body, response.status),
             Provider::Duckduckgo => parse_duckduckgo(&body, response.status),
             Provider::Searxng => parse_searxng(&body, response.status),
             Provider::Arxiv => Ok(parse_arxiv(&body)),
@@ -291,10 +312,11 @@ pub async fn read_results(
 ) {
     let hits = response.results.iter_mut().take(count);
     let urls: Vec<String> = hits.map(|hit| hit.url.clone()).collect();
-    let share = fetch::DEFAULT_MAX_CHARS / urls.len().max(1);
     let pages = fetch::fetch_many(&urls, options).await;
+    let query = &response.query;
     for (hit, page) in response.results.iter_mut().zip(pages) {
-        hit.content = page.ok().map(|page| page.window(0, share).content);
+        let focused = page.map(|page| page.focus(query, fetch::DEFAULT_QUERY_CHARS));
+        hit.content = focused.ok().map(|page| page.content);
     }
 }
 
@@ -318,6 +340,35 @@ pub fn parse_brave(html: &str, status: u16) -> Result<Vec<SearchHit>, ToolError>
             ..ToolError::new(
                 "unexpected_response",
                 "Brave did not return recognizable search results",
+            )
+        });
+    }
+    Ok(hits)
+}
+
+pub fn parse_yahoo(html: &str, status: u16) -> Result<Vec<SearchHit>, ToolError> {
+    let document = dom_query::Document::from(html);
+    let hits: Vec<_> = document
+        .select("div.algo")
+        .iter()
+        .filter_map(|result| {
+            // The link is a redirect that holds the destination, percent-encoded, after "/RU=".
+            let link = result.select(".compTitle a").attr("href")?;
+            let target = link.split("/RU=").nth(1)?.split('/').next()?;
+            let (url, _) = url::form_urlencoded::parse(target.as_bytes()).next()?;
+            let title = result.select("h3").text();
+            let snippet = result.select(".compText").text();
+            let snippet = snippet.split_whitespace().collect::<Vec<_>>().join(" ");
+            let web = Url::parse(&url).is_ok_and(|url| matches!(url.scheme(), "http" | "https"));
+            (web && !title.trim().is_empty()).then(|| SearchHit::new(title.trim(), &*url, snippet))
+        })
+        .collect();
+    if hits.is_empty() {
+        return Err(ToolError {
+            status: Some(status),
+            ..ToolError::new(
+                "unexpected_response",
+                "Yahoo did not return recognizable search results",
             )
         });
     }

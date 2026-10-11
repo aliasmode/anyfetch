@@ -33,6 +33,10 @@ struct SearchInput {
 #[derive(Deserialize, schemars::JsonSchema)]
 struct FetchInput {
     url: String,
+    /// A question or keywords. Returns only the parts of the page that match, with [...] where
+    /// parts are left out, in at most max_chars (default 5000 with a query). Use it when you
+    /// need one fact from a long page. offset is not used with a query.
+    query: Option<String>,
     /// First content character to return. Use with max_chars to read a long page in parts.
     #[serde(default)]
     offset: usize,
@@ -47,6 +51,9 @@ struct FetchInput {
 #[derive(Deserialize, schemars::JsonSchema)]
 struct FetchManyInput {
     urls: Vec<String>,
+    /// A question or keywords. Returns only the parts of each page that match (default 5000
+    /// characters per page with a query).
+    query: Option<String>,
     /// Most content characters to return per page. By default the pages share 50000.
     max_chars: Option<usize>,
     /// Fetch the pages again even if copies from the last 15 minutes exist.
@@ -69,7 +76,7 @@ impl Server {
 
     #[tool(
         name = "web_search",
-        description = "Web search without an API key. The default provider tries Brave, then DuckDuckGo. searxng uses your own instance (needs searxng_url, JSON enabled). Specialist sources: github (repositories), stackoverflow (questions), hackernews (stories), arxiv and papers (research). Returns titles, URLs and snippets. Set read to also get the content of the top results."
+        description = "Web search without an API key. The default provider tries Brave, then Yahoo, then DuckDuckGo. searxng uses your own instance (needs searxng_url, JSON enabled). Specialist sources: github (repositories), stackoverflow (questions), hackernews (stories), arxiv and papers (research). Returns titles, URLs and snippets. Set read to also get, from the top results, the parts of each page that match the query."
     )]
     async fn web_search(
         &self,
@@ -96,7 +103,7 @@ impl Server {
 
     #[tool(
         name = "web_fetch",
-        description = "Fetch a URL with plain requests. Returns readable Markdown or plain text. Page JavaScript is not run. Read a long page in parts with max_chars and offset."
+        description = "Fetch a URL with plain requests. Returns readable Markdown or plain text. Page JavaScript is not run. Set query to get only the parts of the page that answer a question. Read a long page in parts with max_chars and offset."
     )]
     async fn web_fetch(
         &self,
@@ -106,8 +113,15 @@ impl Server {
         respond(context, async {
             let helpers = fetch::Helpers::find();
             let page = fetch::fetch_with(&input.url, helpers.options(input.fresh)).await?;
-            let max_chars = input.max_chars.unwrap_or(fetch::DEFAULT_MAX_CHARS);
-            Ok(page.window(input.offset, max_chars))
+            Ok(match &input.query {
+                Some(query) => {
+                    page.focus(query, input.max_chars.unwrap_or(fetch::DEFAULT_QUERY_CHARS))
+                }
+                None => {
+                    let max_chars = input.max_chars.unwrap_or(fetch::DEFAULT_MAX_CHARS);
+                    page.window(input.offset, max_chars)
+                }
+            })
         })
         .await
     }
@@ -124,7 +138,8 @@ impl Server {
         respond(context, async {
             let helpers = fetch::Helpers::find();
             let pages = fetch::fetch_many(&input.urls, helpers.options(input.fresh)).await;
-            Ok(fetch::pages(&input.urls, pages, input.max_chars))
+            let query = input.query.as_deref();
+            Ok(fetch::pages(&input.urls, pages, input.max_chars, query))
         })
         .await
     }
