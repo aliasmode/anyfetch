@@ -1,0 +1,49 @@
+{
+  "manifest_version": "0.3",
+  "name": "anyfetch",
+  "display_name": "Anyfetch",
+  "version": "0.0.0",
+  "description": "Web search and web fetch with no API keys. Reads the sites that refuse AI agents.",
+  "author": {
+    "name": "AliasMode",
+    "url": "https://github.com/aliasmode"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/aliasmode/anyfetch"
+  },
+  "homepage": "https://github.com/aliasmode/anyfetch",
+  "documentation": "https://github.com/aliasmode/anyfetch#readme",
+  "support": "https://github.com/aliasmode/anyfetch/issues",
+  "license": "Apache-2.0",
+  "server": {
+    "type": "binary",
+    "entry_point": "server/anyfetch",
+    "mcp_config": {
+      "command": "${__dirname}/server/anyfetch",
+      "args": ["mcp"],
+      "platform_overrides": {
+        "win32": {
+          "command": "${__dirname}/server/anyfetch.exe"
+        }
+      }
+    }
+  },
+  "tools": [
+    {
+      "name": "web_search",
+      "description": "Web search without an API key, with domain and date filters"
+    },
+    {
+      "name": "web_fetch",
+      "description": "Read a page as Markdown, or only the parts that answer a question"
+    },
+    {
+      "name": "web_fetch_many",
+      "description": "Read several pages at the same time"
+    }
+  ],
+  "compatibility": {
+    "platforms": ["darwin", "win32"]
+  }
+}

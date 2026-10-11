@@ -10,8 +10,9 @@
   "version": "0.0.0",
   "packages": [
     {
-      "registryType": "oci",
-      "identifier": "ghcr.io/aliasmode/anyfetch:0.0.0",
+      "registryType": "mcpb",
+      "identifier": "https://github.com/aliasmode/anyfetch/releases/download/v0.0.0/anyfetch.mcpb",
+      "fileSha256": "",
       "transport": {
         "type": "stdio"
       }

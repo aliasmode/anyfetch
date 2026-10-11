@@ -1,6 +1,7 @@
-# Publishes a release as a container image, and lists it in the MCP Registry.
+# Publishes a release to the places that list MCP servers: a container image, a bundle for
+# desktop clients on the release, and the entry in the MCP Registry.
 #
-# The image holds the release binary, so this runs after the Release workflow. Run it by hand
+# All three hold the release binaries, so this runs after the Release workflow. Run it by hand
 # with a tag to publish that release again.
 name: Registry
 
@@ -14,8 +15,13 @@ on:
         description: Release tag, for example v0.6.0
         required: true
 
+env:
+  TAG: ${{ inputs.tag || github.event.workflow_run.head_branch }}
+  IMAGE: ghcr.io/aliasmode/anyfetch
+  START: '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"check","version":"0"}}}'
+
 jobs:
-  publish:
+  image:
     if: >-
       github.event_name == 'workflow_dispatch' ||
       (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
@@ -23,10 +29,6 @@ jobs:
     permissions:
       contents: read
       packages: write
-      id-token: write
-    env:
-      TAG: ${{ inputs.tag || github.event.workflow_run.head_branch }}
-      IMAGE: ghcr.io/aliasmode/anyfetch
     steps:
       - uses: actions/checkout@v6
 
@@ -36,8 +38,7 @@ jobs:
       - name: Check that the image fetches a page and serves MCP
         run: |
           docker run --rm anyfetch fetch https://example.com/ | grep -q "Example Domain"
-          start='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"check","version":"0"}}}'
-          (echo "$start"; sleep 3) | docker run -i --rm anyfetch | grep -q '"name":"anyfetch"'
+          (echo "$START"; sleep 3) | docker run -i --rm anyfetch | grep -q '"name":"anyfetch"'
 
       - name: Push the image for both architectures
         run: |
@@ -46,11 +47,59 @@ jobs:
           docker buildx build --platform linux/amd64,linux/arm64 --build-arg VERSION="${TAG#v}" \
             -t "$IMAGE:${TAG#v}" -t "$IMAGE:latest" --push .
 
+  registry:
+    needs: image
+    # A Mac joins the two Mac binaries into one and runs the result.
+    runs-on: macos-latest
+    permissions:
+      contents: write
+      id-token: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Build the bundle for desktop clients
+        run: |
+          gh release download "$TAG" -D release -p 'anyfetch-*-apple-darwin.tar.xz' -p 'anyfetch-x86_64-pc-windows-msvc.zip'
+          mkdir -p bundle/server
+          for processor in aarch64 x86_64; do
+            tar -xJf "release/anyfetch-$processor-apple-darwin.tar.xz" -C release
+          done
+          lipo -create -output bundle/server/anyfetch release/anyfetch-*-apple-darwin/anyfetch
+          unzip -q -j release/anyfetch-x86_64-pc-windows-msvc.zip anyfetch.exe -d bundle/server
+          jq --arg version "${TAG#v}" '.version = $version' .github/bundle/manifest.json > bundle/manifest.json
+          npx -y @anthropic-ai/mcpb@2.1.2 pack bundle anyfetch.mcpb
+
+      - name: Check that the server in the bundle starts on both Mac processors
+        run: |
+          unzip -q anyfetch.mcpb -d unpacked
+          for processor in arm64 x86_64; do
+            (echo "$START"; sleep 3) | arch "-$processor" unpacked/server/anyfetch mcp | grep -q '"name":"anyfetch"'
+          done
+
+      - name: Add the bundle to the release
+        run: gh release upload "$TAG" anyfetch.mcpb --clobber
+
       - name: Publish to the MCP Registry
         run: |
-          curl -fsSL https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_linux_amd64.tar.gz | tar xz mcp-publisher
-          jq --arg version "${TAG#v}" --arg image "$IMAGE" \
-            '.version = $version | .packages[0].identifier = "\($image):\($version)"' server.json > filled.json
+          version="${TAG#v}"
+          jq --arg version "$version" --arg hash "$(shasum -a 256 anyfetch.mcpb | cut -d' ' -f1)" \
+            --arg bundle "https://github.com/aliasmode/anyfetch/releases/download/$TAG/anyfetch.mcpb" \
+            '.version = $version | .packages[0].identifier = $bundle | .packages[0].fileSha256 = $hash' \
+            server.json > filled.json
+          # The registry accepts public images only, and GitHub makes a new package private.
+          # The image is listed from the first release after someone makes the package public.
+          token=$(curl -sS "https://ghcr.io/token?scope=repository:aliasmode/anyfetch:pull" | jq -r '.token // empty' || true)
+          if curl -fsS -o /dev/null -H "Authorization: Bearer $token" \
+            -H "Accept: application/vnd.oci.image.index.v1+json" \
+            "https://ghcr.io/v2/aliasmode/anyfetch/manifests/$version"; then
+            jq --arg image "$IMAGE:$version" \
+              '.packages += [{registryType: "oci", identifier: $image, transport: {type: "stdio"}}]' \
+              filled.json > with-image.json
+            mv with-image.json filled.json
+          fi
           mv filled.json server.json
+          curl -fsSL https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_darwin_arm64.tar.gz | tar xz mcp-publisher
           ./mcp-publisher login github-oidc
           ./mcp-publisher publish
