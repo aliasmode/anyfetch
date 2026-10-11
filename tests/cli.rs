@@ -21,9 +21,9 @@ async fn cli_exposes_default_and_rejects_invalid_provider_arguments() {
     let output = command().arg("--help").output().await.unwrap();
     assert!(output.status.success());
     let help = String::from_utf8(output.stdout).unwrap();
-    assert!(help.contains("[default: duckduckgo]"));
+    assert!(help.contains("[default: auto]"));
     for args in [
-        vec!["query", "--provider", "brave"],
+        vec!["query", "--provider", "bing"],
         vec!["query", "--provider", "searxng"],
     ] {
         let output = command().args(args).output().await.unwrap();

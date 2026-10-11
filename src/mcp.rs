@@ -18,6 +18,16 @@ struct SearchInput {
     provider: search::Provider,
     /// SearXNG instance base URL. Required for searxng; the instance must enable JSON.
     searxng_url: Option<String>,
+    /// Keep results from this domain, for example docs.rs. Web engines only.
+    site: Option<String>,
+    /// How recent the results must be. Web engines only.
+    time: Option<search::Time>,
+    /// Result page, from 1.
+    #[serde(default)]
+    page: usize,
+    /// Also return the page content of this many top results.
+    #[serde(default)]
+    read: usize,
 }
 
 #[derive(Deserialize, schemars::JsonSchema)]
@@ -26,8 +36,22 @@ struct FetchInput {
     /// First content character to return. Use with max_chars to read a long page in parts.
     #[serde(default)]
     offset: usize,
-    /// Most content characters to return. total_chars in the result is the full length.
+    /// Most content characters to return (default 50000). total_chars in the result is the
+    /// full length.
     max_chars: Option<usize>,
+    /// Fetch the page again even if a copy from the last 15 minutes exists.
+    #[serde(default)]
+    fresh: bool,
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
+struct FetchManyInput {
+    urls: Vec<String>,
+    /// Most content characters to return per page. By default the pages share 50000.
+    max_chars: Option<usize>,
+    /// Fetch the pages again even if copies from the last 15 minutes exist.
+    #[serde(default)]
+    fresh: bool,
 }
 
 #[derive(Clone)]
@@ -45,17 +69,33 @@ impl Server {
 
     #[tool(
         name = "web_search",
-        description = "No-key web search. Defaults to DuckDuckGo. Select searxng explicitly to use your own instance; no automatic fallback. SearXNG requires searxng_url and an instance with JSON enabled. Returns source URLs and snippets."
+        description = "Web search without an API key. The default provider tries Brave, then DuckDuckGo. searxng uses your own instance (needs searxng_url, JSON enabled). Specialist sources: github (repositories), stackoverflow (questions), hackernews (stories), arxiv and papers (research). Returns titles, URLs and snippets. Set read to also get the content of the top results."
     )]
     async fn web_search(
         &self,
         Parameters(input): Parameters<SearchInput>,
         context: RequestContext<RoleServer>,
     ) -> CallToolResult {
-        respond(
-            context,
-            search::search(&input.query, input.provider, input.searxng_url.as_deref()),
-        )
+        respond(context, async {
+            let filters = search::Filters {
+                site: input.site,
+                time: input.time,
+                page: input.page,
+            };
+            let instance = input.searxng_url.as_deref();
+            let mut found =
+                search::search_with(&input.query, input.provider, instance, &filters).await?;
+            if input.read > 0 {
+                let browser = clearance::browser();
+                let options = fetch::Options {
+                    browser: browser.as_deref(),
+                    cache: true,
+                    fresh: false,
+                };
+                search::read_results(&mut found, input.read, options).await;
+            }
+            Ok(found)
+        })
         .await
     }
 
@@ -70,8 +110,36 @@ impl Server {
     ) -> CallToolResult {
         respond(context, async {
             let browser = clearance::browser();
-            let page = fetch::fetch_with(&input.url, browser.as_deref()).await?;
-            Ok(page.window(input.offset, input.max_chars))
+            let options = fetch::Options {
+                browser: browser.as_deref(),
+                cache: true,
+                fresh: input.fresh,
+            };
+            let page = fetch::fetch_with(&input.url, options).await?;
+            let max_chars = input.max_chars.unwrap_or(fetch::DEFAULT_MAX_CHARS);
+            Ok(page.window(input.offset, max_chars))
+        })
+        .await
+    }
+
+    #[tool(
+        name = "web_fetch_many",
+        description = "Fetch several URLs at the same time, each like web_fetch. Returns one entry per URL, in order: the page, or its error."
+    )]
+    async fn web_fetch_many(
+        &self,
+        Parameters(input): Parameters<FetchManyInput>,
+        context: RequestContext<RoleServer>,
+    ) -> CallToolResult {
+        respond(context, async {
+            let browser = clearance::browser();
+            let options = fetch::Options {
+                browser: browser.as_deref(),
+                cache: true,
+                fresh: input.fresh,
+            };
+            let pages = fetch::fetch_many(&input.urls, options).await;
+            Ok(fetch::pages(&input.urls, pages, input.max_chars))
         })
         .await
     }

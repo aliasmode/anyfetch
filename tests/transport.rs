@@ -88,6 +88,27 @@ async fn returns_feeds_as_text() {
 }
 
 #[tokio::test]
+async fn reads_the_text_and_title_of_a_pdf() {
+    let pdf = include_bytes!("fixtures/page.pdf");
+    let mut response = format!(
+        "HTTP/1.1 200 OK\r\nContent-Type: application/pdf\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        pdf.len()
+    )
+    .into_bytes();
+    response.extend_from_slice(pdf);
+    let (url, worker) = serve(vec![response]);
+    let result = fetch(&url).await.unwrap();
+    assert_eq!(result.title.as_deref(), Some("Fixture report"));
+    assert_eq!(result.content, "[Page 1]\n\nAn efficient fixture page");
+    worker.join().unwrap();
+
+    let broken = "HTTP/1.1 200 OK\r\nContent-Type: application/pdf\r\nContent-Length: 9\r\nConnection: close\r\n\r\n%PDF-1.4\n";
+    let (url, worker) = serve(vec![broken]);
+    assert_eq!(fetch(&url).await.unwrap_err().code, "extraction_failed");
+    worker.join().unwrap();
+}
+
+#[tokio::test]
 async fn preserves_rate_limit_status_and_server_retry_timing() {
     let (url, worker) = serve(vec![
         "HTTP/1.1 429 Too Many Requests\r\nRetry-After: 17\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_owned(),

@@ -3,7 +3,7 @@ use crate::{
     clearance::{self, Clearance},
 };
 use encoding_rs::{Encoding, UTF_8};
-use std::{path::Path, sync::Arc};
+use std::{path::Path, sync::Arc, time::Duration};
 use url::{Host, Url};
 use wreq::{Client, NoProxy, Proxy, Response, cookie::Jar};
 use wreq_util::{Emulation, Platform, Profile};
@@ -14,6 +14,9 @@ const IDENTITIES: [(Profile, Platform); 2] = [
     (Profile::Safari26_4, Platform::MacOS),
     (Profile::Edge148, Platform::Windows),
 ];
+
+/// The time one request may take, from connecting to the last byte of the answer.
+const TIMEOUT: Duration = Duration::from_secs(30);
 
 /// The identity for requests that carry a clearance from the user's Firefox.
 const FIREFOX: (Profile, Platform) = (Profile::Firefox151, Platform::Linux);
@@ -38,6 +41,7 @@ fn client(
         )
         .cookie_provider(Arc::new(jar))
         .redirect(wreq::redirect::Policy::default())
+        .timeout(TIMEOUT)
         .no_proxy();
     if let Some(proxy) = proxy()? {
         builder = builder.proxy(proxy);
@@ -159,13 +163,14 @@ fn cloudflare_challenge(error: &ToolError) -> bool {
 }
 
 /// The browser is kept away from addresses that are not public sites.
-fn public_site(url: &str) -> bool {
+pub(crate) fn public_site(url: &str) -> bool {
     match Url::parse(url).ok().as_ref().and_then(Url::host) {
-        Some(Host::Domain(domain)) => domain != "localhost",
+        // A name without a dot is a machine on the local network.
+        Some(Host::Domain(domain)) => domain.contains('.') && domain != "localhost",
         Some(Host::Ipv4(address)) => {
             !(address.is_loopback() || address.is_private() || address.is_link_local())
         }
-        Some(Host::Ipv6(address)) => !address.is_loopback(),
+        Some(Host::Ipv6(address)) => !(address.is_loopback() || address.is_unique_local()),
         None => false,
     }
 }

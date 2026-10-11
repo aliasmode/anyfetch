@@ -1,7 +1,10 @@
+mod alternates;
 mod anubis;
+mod cache;
 pub mod clearance;
 pub mod fetch;
 pub mod mcp;
+mod pdf;
 pub mod search;
 pub mod transport;
 
@@ -47,6 +50,9 @@ impl std::error::Error for ToolError {}
 
 impl From<wreq::Error> for ToolError {
     fn from(error: wreq::Error) -> Self {
+        if error.is_timeout() {
+            return Self::new("timeout", "The site did not answer within 30 seconds");
+        }
         Self::new("network_error", error.to_string())
     }
 }

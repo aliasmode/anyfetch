@@ -1,9 +1,14 @@
-use crate::{ToolError, transport};
+use crate::{ToolError, alternates, cache, pdf, transport};
 use dom_query::{Document, NodeRef};
 use dom_smoothie::Readability;
 use encoding_rs::{Encoding, UTF_8};
-use serde::Serialize;
-use std::path::Path;
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use std::{collections::HashSet, path::Path};
+
+/// Content characters returned when the caller does not ask for a number. Larger answers
+/// overflow the tool-output limit of common agent harnesses.
+pub const DEFAULT_MAX_CHARS: usize = 50_000;
 
 #[derive(Debug, Serialize)]
 pub struct Extracted {
@@ -12,7 +17,7 @@ pub struct Extracted {
     pub content: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct FetchResponse {
     pub requested_url: String,
     pub url: String,
@@ -27,20 +32,85 @@ pub struct FetchResponse {
 
 impl FetchResponse {
     /// Keeps at most `max_chars` characters of content, starting at character `offset`.
-    pub fn window(mut self, offset: usize, max_chars: Option<usize>) -> Self {
-        let kept = self.content.chars().skip(offset);
-        self.content = kept.take(max_chars.unwrap_or(usize::MAX)).collect();
+    pub fn window(mut self, offset: usize, max_chars: usize) -> Self {
+        self.content = self.content.chars().skip(offset).take(max_chars).collect();
         self
     }
 }
 
-pub async fn fetch(url: &str) -> Result<FetchResponse, ToolError> {
-    fetch_with(url, None).await
+#[derive(Clone, Copy, Default)]
+pub struct Options<'a> {
+    /// A Firefox-based browser that passes Cloudflare checks which plain requests cannot. See
+    /// [`crate::clearance::browser`].
+    pub browser: Option<&'a Path>,
+    /// Keep a copy of each public page for 15 minutes and answer from it.
+    pub cache: bool,
+    /// Fetch the page again and replace the copy.
+    pub fresh: bool,
 }
 
-/// Like `fetch`. When `browser` is a Firefox-based browser, a Cloudflare challenge that plain
-/// requests cannot pass is passed once in it. See [`crate::clearance::browser`].
-pub async fn fetch_with(url: &str, browser: Option<&Path>) -> Result<FetchResponse, ToolError> {
+pub async fn fetch(url: &str) -> Result<FetchResponse, ToolError> {
+    fetch_with(url, Options::default()).await
+}
+
+pub async fn fetch_with(url: &str, options: Options<'_>) -> Result<FetchResponse, ToolError> {
+    let cache = options.cache && transport::public_site(url);
+    if cache
+        && !options.fresh
+        && let Some(page) = cache::get(url)
+    {
+        return Ok(page);
+    }
+    let page = download(url, options.browser).await?;
+    if cache {
+        cache::put(&page);
+    }
+    Ok(page)
+}
+
+/// Fetches several pages at the same time. Results are in the order of `urls`.
+pub async fn fetch_many(
+    urls: &[String],
+    options: Options<'_>,
+) -> Vec<Result<FetchResponse, ToolError>> {
+    futures_util::future::join_all(urls.iter().map(|url| fetch_with(url, options))).await
+}
+
+/// The JSON answer for several pages: each entry is the page, cut to `max_chars`, or its error.
+/// Without `max_chars`, the pages share [`DEFAULT_MAX_CHARS`].
+pub fn pages(
+    urls: &[String],
+    results: Vec<Result<FetchResponse, ToolError>>,
+    max_chars: Option<usize>,
+) -> serde_json::Value {
+    let max_chars = max_chars.unwrap_or(DEFAULT_MAX_CHARS / urls.len().max(1));
+    let entries: Vec<_> = urls
+        .iter()
+        .zip(results)
+        .map(|(url, result)| match result {
+            Ok(page) => serde_json::json!(page.window(0, max_chars)),
+            Err(error) => serde_json::json!({ "requested_url": url, "error": error }),
+        })
+        .collect();
+    serde_json::json!({ "pages": entries })
+}
+
+async fn download(url: &str, browser: Option<&Path>) -> Result<FetchResponse, ToolError> {
+    if let Ok(parsed) = url::Url::parse(url)
+        && let Some(page) = alternates::read(&parsed).await
+    {
+        return Ok(FetchResponse {
+            requested_url: url.to_owned(),
+            url: url.to_owned(),
+            status: 200,
+            content_type: "text/markdown".to_owned(),
+            retrieved_at: crate::retrieved_at(),
+            title: Some(page.title),
+            description: None,
+            total_chars: page.content.chars().count(),
+            content: page.content,
+        });
+    }
     let response = transport::get_page(url, supported, browser).await?;
     let final_url = response.url;
     let status = response.status;
@@ -49,21 +119,40 @@ pub async fn fetch_with(url: &str, browser: Option<&Path>) -> Result<FetchRespon
     let media_type = mime.as_ref().map_or("", mime::Mime::essence_str);
     let is_html = matches!(media_type, "text/html" | "application/xhtml+xml");
     let bytes = response.bytes;
-    let encoding = Encoding::for_bom(&bytes)
-        .map(|(encoding, _)| encoding)
-        .or_else(|| mime.as_ref().and_then(charset))
-        .or_else(|| if is_html { html_charset(&bytes) } else { None })
-        .unwrap_or(UTF_8);
-    let (body, _, _) = encoding.decode(&bytes);
-    let (title, description, content) = if is_html {
-        let extracted = extract(&body, &final_url)?;
-        (
-            Some(extracted.title),
-            extracted.description,
-            extracted.content,
-        )
+    let (title, description, content) = if media_type == "application/pdf" {
+        let parsed = tokio::task::spawn_blocking(move || pdf::read(&bytes)).await;
+        let document = parsed
+            .unwrap_or(Err("The PDF is damaged"))
+            .map_err(|message| ToolError::new("extraction_failed", message))?;
+        let pages = document.pages.iter().enumerate();
+        let pages = pages.filter(|(_, text)| !text.is_empty());
+        let content: Vec<String> = pages
+            .map(|(index, text)| format!("[Page {}]\n\n{text}", index + 1))
+            .collect();
+        if content.is_empty() {
+            return Err(ToolError::new(
+                "extraction_failed",
+                "The PDF has no text; it may be a scan",
+            ));
+        }
+        (document.title, None, content.join("\n\n"))
     } else {
-        (None, None, body.into_owned())
+        let encoding = Encoding::for_bom(&bytes)
+            .map(|(encoding, _)| encoding)
+            .or_else(|| mime.as_ref().and_then(charset))
+            .or_else(|| if is_html { html_charset(&bytes) } else { None })
+            .unwrap_or(UTF_8);
+        let (body, _, _) = encoding.decode(&bytes);
+        if is_html {
+            let extracted = extract(&body, &final_url)?;
+            (
+                Some(extracted.title),
+                extracted.description,
+                extracted.content,
+            )
+        } else {
+            (None, None, body.into_owned())
+        }
     };
     Ok(FetchResponse {
         requested_url: url.to_owned(),
@@ -80,7 +169,10 @@ pub async fn fetch_with(url: &str, browser: Option<&Path>) -> Result<FetchRespon
 
 fn supported(media_type: &str) -> bool {
     media_type.starts_with("text/")
-        || matches!(media_type, "application/json" | "application/xml")
+        || matches!(
+            media_type,
+            "application/json" | "application/xml" | "application/pdf"
+        )
         || media_type.ends_with("+json")
         || media_type.ends_with("+xml")
 }
@@ -119,24 +211,53 @@ pub fn extract(html: &str, url: &str) -> Result<Extracted, ToolError> {
     let document = Document::from(html);
     let description = description(&document);
     let page_title = document.select("title").text().trim().to_owned();
+    let embedded = embedded_text(&document);
     plain_code_blocks(&document);
-    let failed = |message: String| ToolError::new("extraction_failed", message);
     let article = Readability::with_document(document, Some(url), None)
         .and_then(|mut readability| readability.parse());
-    let (title, content) = match article {
+    let (title, mut content) = match article {
         Ok(article) => {
             let content = Document::from(article.content.as_ref()).md(None);
             (article.title, content.to_string())
         }
-        // A script-rendered page has no article, but its summary still says what the page is.
-        Err(_) if description.is_some() => (page_title, String::new()),
-        Err(error) => return Err(failed(error.to_string())),
+        Err(_) => (page_title, String::new()),
     };
-    let content = match &description {
-        _ if !content.trim().is_empty() => content,
-        Some(description) => description.clone(),
-        None => return Err(failed("No readable content was extracted".into())),
+    // A script-rendered page has no article. Its summary still says what the page is, and its
+    // embedded data holds the text that the scripts would show.
+    if content.trim().is_empty() {
+        content = description.clone().unwrap_or_default();
+    }
+    // Embedded data often repeats the article in another form, so a text counts as already
+    // shown when most of its words are on the page.
+    let words = |text: &str| -> HashSet<String> {
+        let words = text.split(|letter: char| !letter.is_alphanumeric());
+        let long = words.filter(|word| word.len() >= 4);
+        long.map(str::to_lowercase).collect()
     };
+    let shown = words(&content);
+    let unseen: Vec<&str> = embedded
+        .iter()
+        .map(String::as_str)
+        .filter(|text| {
+            let words = words(text);
+            let known = words.iter().filter(|word| shown.contains(*word)).count();
+            known * 2 <= words.len() && !content.contains(text)
+        })
+        .collect();
+    if unseen.iter().map(|text| text.len()).sum::<usize>() > content.len() {
+        content = [content.trim_end()]
+            .into_iter()
+            .chain(unseen)
+            .filter(|part| !part.is_empty())
+            .collect::<Vec<_>>()
+            .join("\n\n");
+    }
+    if content.trim().is_empty() {
+        return Err(ToolError::new(
+            "extraction_failed",
+            "No readable content was extracted",
+        ));
+    }
     Ok(Extracted {
         title,
         description,
@@ -151,6 +272,99 @@ fn description(document: &Document) -> Option<String> {
         .filter_map(|selector| document.select(selector).attr("content"))
         .map(|content| content.trim().to_owned())
         .find(|content| !content.is_empty())
+}
+
+/// Prose in the page's embedded data: JSON-LD, framework state, and JSON that a script assigns,
+/// passes to a call, or holds in an object. Each text appears once, in page order.
+fn embedded_text(document: &Document) -> Vec<String> {
+    let mut found = Vec::new();
+    for script in document.select("script").iter() {
+        let source = script.text();
+        let kind = script.attr("type").unwrap_or_default().to_ascii_lowercase();
+        if kind.ends_with("json") {
+            if let Ok(data) = serde_json::from_str(&source) {
+                prose(&data, "", &mut found);
+            }
+            continue;
+        }
+        let mut rest = &*source;
+        while let Some(at) = rest.find("{\"") {
+            let assigned = rest[..at].trim_end().ends_with(['=', '(', ':']);
+            let mut values = serde_json::Deserializer::from_str(&rest[at..]).into_iter();
+            match values.next().filter(|_| assigned) {
+                Some(Ok(data)) => {
+                    prose(&data, "", &mut found);
+                    rest = &rest[at + values.byte_offset()..];
+                }
+                _ => rest = &rest[at + 2..],
+            }
+        }
+    }
+    let mut seen = HashSet::new();
+    found.retain(|text| seen.insert(text.clone()));
+    found
+}
+
+/// Collects strings that sit under keys which name text for people, such as `description`.
+fn prose(data: &Value, key: &str, found: &mut Vec<String>) {
+    const TEXT: [&str; 15] = [
+        "title",
+        "name",
+        "headline",
+        "description",
+        "shortdescription",
+        "text",
+        "simpletext",
+        "body",
+        "caption",
+        "full_text",
+        "bio",
+        "summary",
+        "articlebody",
+        "content",
+        "snippet",
+    ];
+    const NOT_CONTENT: [&str; 12] = [
+        "i18n",
+        "translations",
+        "translation",
+        "messages",
+        "config",
+        "experiments",
+        "routes",
+        "manifest",
+        "ads",
+        "tracking",
+        "analytics",
+        "locales",
+    ];
+    match data {
+        Value::Object(fields) => {
+            for (name, value) in fields {
+                let name = name.to_ascii_lowercase();
+                if !NOT_CONTENT.contains(&&*name) {
+                    prose(value, &name, found);
+                }
+            }
+        }
+        Value::Array(items) => items.iter().for_each(|item| prose(item, key, found)),
+        Value::String(text) if TEXT.contains(&key) => {
+            let text = if text.contains('<') {
+                Document::from(text.as_str())
+                    .select("body")
+                    .text()
+                    .to_string()
+            } else {
+                text.clone()
+            };
+            let text = text.trim();
+            // A label is short or has no spaces; a sentence has both length and spaces.
+            if text.len() >= 15 && text.contains(' ') {
+                found.push(text.to_owned());
+            }
+        }
+        _ => {}
+    }
 }
 
 /// Highlighters split code lines into elements without newlines, and Readability drops code

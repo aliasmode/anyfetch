@@ -110,22 +110,32 @@ async fn stdio_exposes_two_tools_and_preserves_results_and_errors() {
         .map(|t| t["name"].as_str().unwrap())
         .collect::<Vec<_>>();
     names.sort();
-    assert_eq!(names, ["web_fetch", "web_search"]);
+    assert_eq!(names, ["web_fetch", "web_fetch_many", "web_search"]);
     for tool in tools {
-        let field = if tool["name"] == "web_fetch" {
-            "url"
-        } else {
-            "query"
+        let field = match tool["name"].as_str().unwrap() {
+            "web_fetch" => "url",
+            "web_fetch_many" => "urls",
+            _ => "query",
         };
         assert_eq!(tool["inputSchema"]["required"], json!([field]));
         if field == "query" {
             assert_eq!(
                 tool["inputSchema"]["properties"]["provider"]["default"],
-                "duckduckgo"
+                "auto"
             );
             assert_eq!(
                 tool["inputSchema"]["$defs"]["Provider"]["enum"],
-                json!(["duckduckgo", "searxng"])
+                json!([
+                    "auto",
+                    "brave",
+                    "duckduckgo",
+                    "searxng",
+                    "github",
+                    "stackoverflow",
+                    "hackernews",
+                    "arxiv",
+                    "papers"
+                ])
             );
         }
     }
@@ -202,7 +212,7 @@ async fn stdio_exposes_two_tools_and_preserves_results_and_errors() {
 async fn search_provider_selection_preserves_results_and_errors() {
     let mut session = Session::start().await;
     for arguments in [
-        json!({"query":"test","provider":"brave"}),
+        json!({"query":"test","provider":"bing"}),
         json!({"query":"test","provider":"searxng"}),
     ] {
         session.send(json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"web_search","arguments":arguments}})).await;

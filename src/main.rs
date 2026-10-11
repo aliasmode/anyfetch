@@ -12,9 +12,9 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Serve web_search and web_fetch over stdio MCP.
+    /// Serve the web tools over stdio MCP.
     Mcp,
-    /// Search without an API key. Provider changes are explicit; no automatic fallback.
+    /// Search without an API key. The default provider tries Brave, then DuckDuckGo.
     Search {
         query: String,
         #[arg(long, value_enum, default_value_t = search::Provider::default())]
@@ -22,18 +22,35 @@ enum Command {
         /// SearXNG instance base URL; the instance must enable JSON search.
         #[arg(long, required_if_eq("provider", "searxng"))]
         searxng_url: Option<String>,
+        /// Keep results from this domain, for example docs.rs. Web engines only.
+        #[arg(long)]
+        site: Option<String>,
+        /// How recent the results must be. Web engines only.
+        #[arg(long, value_enum)]
+        time: Option<search::Time>,
+        /// Result page.
+        #[arg(long, default_value_t = 1)]
+        page: usize,
+        /// Also return the page content of this many top results.
+        #[arg(long, default_value_t = 0)]
+        read: usize,
     },
-    /// Fetch a page and extract its readable content.
+    /// Fetch one or more pages and extract their readable content.
     Fetch {
-        url: String,
+        #[arg(required = true, value_name = "URL")]
+        urls: Vec<String>,
         #[arg(long, value_enum, default_value_t = Format::Json)]
         format: Format,
-        /// First content character to return.
+        /// First content character to return, for one URL.
         #[arg(long, default_value_t = 0)]
         offset: usize,
-        /// Most content characters to return; the JSON total_chars is the full length.
+        /// Most content characters to return per page. The default is 50000, shared between
+        /// the pages. The JSON total_chars is the full length.
         #[arg(long)]
         max_chars: Option<usize>,
+        /// Fetch again even if a copy from the last 15 minutes exists.
+        #[arg(long)]
+        fresh: bool,
     },
 }
 
@@ -67,17 +84,58 @@ async fn main() -> ExitCode {
             query,
             provider,
             searxng_url,
-        } => search::search(&query, provider, searxng_url.as_deref())
-            .await
-            .map(|value| json!(value)),
+            site,
+            time,
+            page,
+            read,
+        } => {
+            let filters = search::Filters { site, time, page };
+            let instance = searxng_url.as_deref();
+            let mut found = search::search_with(&query, provider, instance, &filters).await;
+            if read > 0
+                && let Ok(found) = &mut found
+            {
+                let browser = clearance::browser();
+                let options = fetch::Options {
+                    browser: browser.as_deref(),
+                    cache: true,
+                    fresh: false,
+                };
+                search::read_results(found, read, options).await;
+            }
+            found.map(|value| json!(value))
+        }
         Command::Fetch {
-            url,
+            urls,
             offset,
             max_chars,
+            fresh,
             ..
-        } => fetch::fetch_with(&url, clearance::browser().as_deref())
-            .await
-            .map(|page| json!(page.window(offset, max_chars))),
+        } => {
+            let browser = clearance::browser();
+            let options = fetch::Options {
+                browser: browser.as_deref(),
+                cache: true,
+                fresh,
+            };
+            if let [url] = urls.as_slice() {
+                let max_chars = max_chars.unwrap_or(fetch::DEFAULT_MAX_CHARS);
+                let page = fetch::fetch_with(url, options).await;
+                page.map(|page| {
+                    let shown = offset + max_chars.min(page.total_chars.saturating_sub(offset));
+                    if markdown && shown < page.total_chars {
+                        eprintln!(
+                            "Showing characters {offset} to {shown} of {}. Add --offset {shown} for the next part.",
+                            page.total_chars
+                        );
+                    }
+                    json!(page.window(offset, max_chars))
+                })
+            } else {
+                let pages = fetch::fetch_many(&urls, options).await;
+                Ok(fetch::pages(&urls, pages, max_chars))
+            }
+        }
     };
     let (value, success) = match result {
         Ok(value) => (value, true),
@@ -85,7 +143,7 @@ async fn main() -> ExitCode {
     };
     let mut output = std::io::stdout().lock();
     let written = if success && markdown {
-        writeln!(output, "{}", value["content"].as_str().unwrap_or_default())
+        writeln!(output, "{}", markdown_text(&value))
     } else {
         writeln!(output, "{value}")
     };
@@ -98,4 +156,20 @@ async fn main() -> ExitCode {
     } else {
         ExitCode::FAILURE
     }
+}
+
+/// The content of one page, or of several pages under a heading each.
+fn markdown_text(value: &serde_json::Value) -> String {
+    let content = |page: &serde_json::Value| match page["content"].as_str() {
+        Some(content) => content.to_owned(),
+        None => page["error"].to_string(),
+    };
+    let Some(pages) = value["pages"].as_array() else {
+        return content(value);
+    };
+    let sections = pages.iter().map(|page| {
+        let url = page["requested_url"].as_str().unwrap_or_default();
+        format!("# {url}\n\n{}", content(page))
+    });
+    sections.collect::<Vec<_>>().join("\n\n---\n\n")
 }

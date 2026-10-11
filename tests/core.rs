@@ -1,6 +1,6 @@
 use fetchroam::{
     fetch::extract,
-    search::{parse_duckduckgo, parse_searxng},
+    search::{parse_brave, parse_duckduckgo, parse_searxng},
 };
 
 #[test]
@@ -48,6 +48,24 @@ fn duckduckgo_distinguishes_challenges_empty_results_and_bad_pages() {
             "unexpected_response"
         );
     }
+}
+
+#[test]
+fn brave_returns_web_results_with_direct_links() {
+    let hits = parse_brave(include_str!("fixtures/brave.html"), 200).unwrap();
+    assert_eq!(hits.len(), 2);
+    assert_eq!(hits[0].url, "https://corrode.dev/blog/async/");
+    assert_eq!(
+        hits[0].title,
+        "The State of Async Rust: Runtimes | corrode Rust Consulting"
+    );
+    assert!(
+        hits[0]
+            .snippet
+            .contains("Tokio stands as Rust’s canonical async runtime.")
+    );
+    let error = parse_brave("<html><body>Checking your browser</body></html>", 200).unwrap_err();
+    assert_eq!(error.code, "unexpected_response");
 }
 
 #[test]
@@ -140,6 +158,40 @@ fn script_rendered_page_falls_back_to_its_title_and_description() {
     assert_eq!(page.content, "What the video shows.");
     let error = extract(&shell(""), "https://example.org/watch").unwrap_err();
     assert_eq!(error.code, "extraction_failed");
+}
+
+#[test]
+fn script_rendered_page_yields_the_text_in_its_embedded_data() {
+    let html = r#"<html><head><title>Video</title>
+        <meta name="description" content="Short summary.">
+        <script type="application/ld+json">{"@type":"VideoObject","name":"Ignored label",
+          "description":"The full description of the video, from the structured data."}</script>
+        <script>var playerResponse = {"videoDetails":{"videoId":"x1",
+          "shortDescription":"Line one of the uploader's notes.\nLine two has more detail.",
+          "keywords":["a","b"]},"config":{"description":"internal settings text, not content"}};
+          render(playerResponse);</script>
+        </head><body><div id="app"></div></body></html>"#;
+    let content = extract(html, "https://example.org/watch").unwrap().content;
+    assert!(content.starts_with("Short summary."));
+    assert!(content.contains("The full description of the video, from the structured data."));
+    assert!(content.contains("Line one of the uploader's notes.\nLine two has more detail."));
+    assert!(!content.contains("internal settings"));
+    assert!(!content.contains("Ignored label"));
+}
+
+#[test]
+fn article_is_not_replaced_by_its_smaller_embedded_data() {
+    let paragraphs = "<p>This reference explains how to build a useful command line research tool. It describes its configuration, expected outputs, and reusable interfaces.</p>".repeat(6);
+    let html = format!(
+        r#"<html><head><title>Reference</title><script type="application/ld+json">
+        {{"headline":"A headline that is only in the data","description":"A teaser that is only in the data."}}
+        </script></head><body><article><h1>Reference</h1>{paragraphs}</article></body></html>"#
+    );
+    let content = extract(&html, "https://example.org/reference")
+        .unwrap()
+        .content;
+    assert!(content.contains("command line research tool"));
+    assert!(!content.contains("only in the data"));
 }
 
 #[test]
