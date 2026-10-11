@@ -38,13 +38,13 @@ Measured on 2026-10-11 from a cloud server, with no proxy. See [how we measured]
 macOS and Linux:
 
 ```sh
-curl -fsSL https://dthedavid.github.io/fetchroam/install.sh | sh
+curl -fsSL https://aliasmode.github.io/fetchroam/install.sh | sh
 ```
 
 Windows, in PowerShell:
 
 ```powershell
-irm https://dthedavid.github.io/fetchroam/install.ps1 | iex
+irm https://aliasmode.github.io/fetchroam/install.ps1 | iex
 ```
 
 The installer puts `fetchroam` in `~/.local/bin`. Check it with `fetchroam --version`.
@@ -307,7 +307,7 @@ python3 bench/speed.py /path/to/chromium
 You need Rust 1.98, `cmake` and `clang` (the TLS library is BoringSSL). On Windows you also need NASM.
 
 ```sh
-cargo install --git https://github.com/dtheDavid/fetchroam
+cargo install --git https://github.com/aliasmode/fetchroam
 ```
 
 ## License
