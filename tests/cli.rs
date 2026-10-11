@@ -102,3 +102,44 @@ async fn cli_sends_requests_through_the_proxy_file() {
     assert!(request.starts_with("GET http://searx.test/search?q=query&format=json "));
     assert!(request.contains("Basic dXNlcjpwYTpzcw=="));
 }
+
+#[tokio::test]
+async fn cli_fetch_sends_a_saved_clearance_for_the_site() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}/", listener.local_addr().unwrap());
+    let home = std::env::temp_dir().join(format!("fetchroam-clearance-{}", std::process::id()));
+    let store = home.join(".config/fetchroam/clearance");
+    std::fs::create_dir_all(&store).unwrap();
+    let saved = r#"{"user_agent":"FakeFox/1.0","expires":4000000000,
+        "cookies":[{"name":"cf_clearance","value":"pass","domain":"127.0.0.1"}]}"#;
+    std::fs::write(store.join("127.0.0.1.json"), saved).unwrap();
+    let fixture = tokio::spawn(async move {
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let mut request = Vec::new();
+        while !request.ends_with(b"\r\n\r\n") {
+            request.push(socket.read_u8().await.unwrap());
+        }
+        socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 5\r\nConnection: close\r\n\r\nhello").await.unwrap();
+        String::from_utf8(request).unwrap().to_ascii_lowercase()
+    });
+    let output = timeout(
+        Duration::from_secs(10),
+        Command::new(env!("CARGO_BIN_EXE_fetchroam"))
+            .args(["fetch", &url])
+            .env("HOME", &home)
+            .env("USERPROFILE", &home)
+            .env("FETCHROAM_BROWSER", "off")
+            .kill_on_drop(true)
+            .output(),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    std::fs::remove_dir_all(&home).unwrap();
+    assert!(output.status.success());
+    let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["content"], "hello");
+    let request = fixture.await.unwrap();
+    assert!(request.contains("user-agent: fakefox/1.0"));
+    assert!(request.contains("cookie: cf_clearance=pass"));
+}

@@ -1,6 +1,11 @@
-use crate::{ToolError, anubis};
+use crate::{
+    ToolError, anubis,
+    clearance::{self, Clearance},
+};
 use encoding_rs::{Encoding, UTF_8};
-use wreq::{Client, NoProxy, Proxy, Response};
+use std::{path::Path, sync::Arc};
+use url::{Host, Url};
+use wreq::{Client, NoProxy, Proxy, Response, cookie::Jar};
 use wreq_util::{Emulation, Platform, Profile};
 
 /// Browser identities in the order tried. Measured on 97 bot-filtered sites (2026-10-11), Safari
@@ -10,7 +15,20 @@ const IDENTITIES: [(Profile, Platform); 2] = [
     (Profile::Edge148, Platform::Windows),
 ];
 
-fn client((profile, platform): (Profile, Platform)) -> Result<Client, ToolError> {
+/// The identity for requests that carry a clearance from the user's Firefox.
+const FIREFOX: (Profile, Platform) = (Profile::Firefox151, Platform::Linux);
+
+fn client(
+    (profile, platform): (Profile, Platform),
+    cleared: Option<(&Clearance, &str)>,
+) -> Result<Client, ToolError> {
+    let jar = Jar::default();
+    for cookie in cleared.iter().flat_map(|(clearance, _)| &clearance.cookies) {
+        let (name, value) = (&cookie.name, &cookie.value);
+        let domain = cookie.domain.trim_start_matches('.');
+        let url = cleared.map_or("", |(_, url)| url);
+        jar.add(format!("{name}={value}; Domain={domain}; Path=/"), url);
+    }
     let mut builder = Client::builder()
         .emulation(
             Emulation::builder()
@@ -18,7 +36,7 @@ fn client((profile, platform): (Profile, Platform)) -> Result<Client, ToolError>
                 .platform(platform)
                 .build(),
         )
-        .cookie_store(true)
+        .cookie_provider(Arc::new(jar))
         .redirect(wreq::redirect::Policy::default())
         .no_proxy();
     if let Some(proxy) = proxy()? {
@@ -78,13 +96,34 @@ impl Body {
 }
 
 pub(crate) async fn get(url: &str, accept: fn(&str) -> bool) -> Result<Body, ToolError> {
-    attempt(url, accept, IDENTITIES[0]).await
+    attempt(url, accept, IDENTITIES[0], None).await
 }
 
 /// Like `get`, but retries a refused page. Cloudflare's verdict on one identical request varies
 /// between attempts (measured: about two in three pass), so a Cloudflare challenge is tried again
-/// as the same identity. Any other refusal is tried once as the second browser identity.
-pub(crate) async fn get_page(url: &str, accept: fn(&str) -> bool) -> Result<Body, ToolError> {
+/// as the same identity. Any other refusal is tried once as the second browser identity. A
+/// challenge that stays is passed once in `browser`, and the clearance is reused for the site.
+pub(crate) async fn get_page(
+    url: &str,
+    accept: fn(&str) -> bool,
+    browser: Option<&Path>,
+) -> Result<Body, ToolError> {
+    let host = Url::parse(url)
+        .ok()
+        .and_then(|url| url.host_str().map(str::to_owned));
+    // A clearance is tied to the address that earned it, so it is no use behind a proxy.
+    let direct = matches!(proxy(), Ok(None));
+    if direct
+        && let Some(host) = &host
+        && let Some(saved) = clearance::load(host)
+    {
+        match attempt(url, accept, FIREFOX, Some(&saved)).await {
+            Err(error) if cloudflare_challenge(&error) => clearance::forget(host),
+            // Let the usual identities try a page that this one is refused.
+            Err(error) if matches!(error.status, Some(401 | 403)) => {}
+            result => return result,
+        }
+    }
     let mut result = get(url, accept).await;
     for _ in 0..2 {
         if !matches!(&result, Err(error) if cloudflare_challenge(error)) {
@@ -93,8 +132,17 @@ pub(crate) async fn get_page(url: &str, accept: fn(&str) -> bool) -> Result<Body
         result = get(url, accept).await;
     }
     match result {
-        Err(error) if !cloudflare_challenge(&error) && matches!(error.status, Some(401 | 403)) => {
-            match attempt(url, accept, IDENTITIES[1]).await {
+        Err(error) if cloudflare_challenge(&error) => {
+            let Some(browser) = browser.filter(|_| direct && public_site(url)) else {
+                return Err(error);
+            };
+            match clearance::ensure(browser, url).await {
+                Ok(fresh) => attempt(url, accept, FIREFOX, Some(&fresh)).await,
+                Err(_) => Err(error),
+            }
+        }
+        Err(error) if matches!(error.status, Some(401 | 403)) => {
+            match attempt(url, accept, IDENTITIES[1], None).await {
                 Err(retry) if matches!(retry.code, "challenge_required" | "rate_limited") => {
                     Err(retry)
                 }
@@ -110,19 +158,37 @@ fn cloudflare_challenge(error: &ToolError) -> bool {
     error.code == "challenge_required" && error.status == Some(403)
 }
 
+/// The browser is kept away from addresses that are not public sites.
+fn public_site(url: &str) -> bool {
+    match Url::parse(url).ok().as_ref().and_then(Url::host) {
+        Some(Host::Domain(domain)) => domain != "localhost",
+        Some(Host::Ipv4(address)) => {
+            !(address.is_loopback() || address.is_private() || address.is_link_local())
+        }
+        Some(Host::Ipv6(address)) => !address.is_loopback(),
+        None => false,
+    }
+}
+
 async fn attempt(
     url: &str,
     accept: fn(&str) -> bool,
     identity: (Profile, Platform),
+    cleared: Option<&Clearance>,
 ) -> Result<Body, ToolError> {
-    let client = client(identity)?;
-    let (body, challenge) = read(client.get(url).send().await?, false, accept).await?;
+    let client = client(identity, cleared.map(|clearance| (clearance, url)))?;
+    let get = |target: &str| match cleared {
+        Some(clearance) => client
+            .get(target)
+            .header("user-agent", &clearance.user_agent),
+        None => client.get(target),
+    };
+    let (body, challenge) = read(get(url).send().await?, false, accept).await?;
     let Some(challenge) = challenge else {
         return Ok(body);
     };
     let completion = challenge.completion_url(&body.url).await?;
-    let response = client
-        .get(completion.as_str())
+    let response = get(completion.as_str())
         .send()
         .await
         .map_err(|_| ToolError::new("network_error", "Anubis completion request failed"))?;

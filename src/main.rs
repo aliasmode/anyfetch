@@ -1,5 +1,5 @@
 use clap::{Parser, Subcommand, ValueEnum};
-use fetchroam::{fetch, search};
+use fetchroam::{clearance, fetch, search};
 use serde_json::json;
 use std::{io::Write, process::ExitCode};
 
@@ -75,7 +75,7 @@ async fn main() -> ExitCode {
             offset,
             max_chars,
             ..
-        } => fetch::fetch(&url)
+        } => fetch::fetch_with(&url, clearance::browser().as_deref())
             .await
             .map(|page| json!(page.window(offset, max_chars))),
     };

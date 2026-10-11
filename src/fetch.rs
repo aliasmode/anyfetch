@@ -3,6 +3,7 @@ use dom_query::{Document, NodeRef};
 use dom_smoothie::Readability;
 use encoding_rs::{Encoding, UTF_8};
 use serde::Serialize;
+use std::path::Path;
 
 #[derive(Debug, Serialize)]
 pub struct Extracted {
@@ -34,7 +35,13 @@ impl FetchResponse {
 }
 
 pub async fn fetch(url: &str) -> Result<FetchResponse, ToolError> {
-    let response = transport::get_page(url, supported).await?;
+    fetch_with(url, None).await
+}
+
+/// Like `fetch`. When `browser` is a Firefox-based browser, a Cloudflare challenge that plain
+/// requests cannot pass is passed once in it. See [`crate::clearance::browser`].
+pub async fn fetch_with(url: &str, browser: Option<&Path>) -> Result<FetchResponse, ToolError> {
+    let response = transport::get_page(url, supported, browser).await?;
     let final_url = response.url;
     let status = response.status;
     let content_type = response.content_type;

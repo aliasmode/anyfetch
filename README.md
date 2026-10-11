@@ -14,8 +14,9 @@ Measured on 2026-10-11 from a cloud server, one request per site, no proxy. The 
 - **`web_search`** — DuckDuckGo results with no key, or your own SearXNG instance.
 - **`web_fetch`** — clean Markdown with links, tables and code blocks intact. Long pages can be read in parts.
 - **Browser-grade requests** — Safari's TLS, HTTP/2 and header fingerprint. A refused fetch is retried automatically, as the same browser or as a second one.
+- **Passes Cloudflare checks** — when a site insists on a JavaScript check, your own Firefox passes it once. After that, Fetchroam reads the site with plain requests.
 - **Anubis-aware** — completes Anubis proof-of-work checks, as a browser does.
-- **Lightweight** — a 12 MB Rust binary. No browser, no JavaScript engine, no Python, no Node.
+- **Lightweight** — a 14 MB Rust binary. No bundled browser, no JavaScript engine, no Python, no Node.
 - **Works everywhere** — a stdio MCP server for agent harnesses, and a plain CLI for everything else.
 
 ## Install
@@ -191,9 +192,37 @@ host:port:username:password
 
 Fetchroam then sends every search and fetch through that HTTP proxy. The file holds the password in plain text, so keep it private: `chmod 600 ~/.config/fetchroam/proxy`. Delete the file to go direct again.
 
+## Cloudflare checks
+
+Some sites, Stack Overflow for one, answer every first request with a JavaScript check. Fetchroam handles it in two steps:
+
+1. Your own Firefox passes the check once. It runs hidden, with a throwaway profile, for a few seconds.
+2. Fetchroam saves the clearance for that site and goes back to plain requests. On Stack Overflow, one pass is good for a year.
+
+In our test, the first Stack Overflow page took about 6 seconds and the next one under 2 seconds.
+
+This needs Firefox, or a Firefox-based browser, on the machine. Without one, nothing changes: the fetch returns `challenge_required`.
+
+| Setting | Effect |
+| --- | --- |
+| `FETCHROAM_BROWSER=off` | Never start a browser. |
+| `FETCHROAM_BROWSER=/path/to/browser` | Use this Firefox-based browser. |
+
+For an MCP server, set the variable in the server entry. In Claude Code:
+
+```sh
+claude mcp add --scope user fetchroam -e FETCHROAM_BROWSER=off -- fetchroam mcp
+```
+
+Notes:
+
+- Tested on Linux. On Windows, and for a snap-packaged Firefox (the Ubuntu default), the browser is used only when `FETCHROAM_BROWSER` names it.
+- A clearance belongs to the address that earned it, so the browser is not used together with a proxy.
+- Saved clearances are in `~/.config/fetchroam/clearance/`. Delete a file to forget a site.
+
 ## What it does not do
 
-Fetchroam does not run JavaScript, solve CAPTCHAs or log in. Pages behind a Cloudflare challenge, a paywall or a sign-in wall stay closed, and Fetchroam says so with an error code.
+Fetchroam itself does not run JavaScript, solve CAPTCHAs or log in. Pages behind a CAPTCHA, a paywall or a sign-in wall stay closed, and Fetchroam says so with an error code.
 
 ## Build from source
 

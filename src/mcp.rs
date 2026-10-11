@@ -1,4 +1,4 @@
-use crate::{ToolError, fetch, search};
+use crate::{ToolError, clearance, fetch, search};
 use rmcp::{
     RoleServer, ServerHandler, ServiceExt,
     handler::server::{router::tool::ToolRouter, wrapper::Parameters},
@@ -61,7 +61,7 @@ impl Server {
 
     #[tool(
         name = "web_fetch",
-        description = "Fetch a URL without a browser. Returns readable Markdown or plain text. Does not run JavaScript. Read a long page in parts with max_chars and offset."
+        description = "Fetch a URL with plain requests. Returns readable Markdown or plain text. Page JavaScript is not run. Read a long page in parts with max_chars and offset."
     )]
     async fn web_fetch(
         &self,
@@ -69,7 +69,8 @@ impl Server {
         context: RequestContext<RoleServer>,
     ) -> CallToolResult {
         respond(context, async {
-            let page = fetch::fetch(&input.url).await?;
+            let browser = clearance::browser();
+            let page = fetch::fetch_with(&input.url, browser.as_deref()).await?;
             Ok(page.window(input.offset, input.max_chars))
         })
         .await
@@ -83,7 +84,7 @@ impl ServerHandler for Server {
             .with_server_info(Implementation::new("fetchroam", env!("CARGO_PKG_VERSION")))
             .with_instructions(
                 "Web search and page fetch for research. Requests look like a real browser, so \
-                 web_fetch reads many sites that refuse default AI fetchers. No JavaScript runs.",
+                 web_fetch reads many sites that refuse default AI fetchers. Page JavaScript is not run.",
             )
     }
 }

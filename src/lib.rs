@@ -1,4 +1,5 @@
 mod anubis;
+pub mod clearance;
 pub mod fetch;
 pub mod mcp;
 pub mod search;

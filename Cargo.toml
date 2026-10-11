@@ -1,6 +1,6 @@
 [package]
 name = "fetchroam"
-version = "0.1.1"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.98"
 license = "Apache-2.0"
@@ -18,11 +18,12 @@ encoding_rs = "0.8"
 mime = "0.3"
 dom_smoothie = "=0.18.2"
 rmcp = { version = "=3.1.2", default-features = false, features = ["server", "macros", "transport-io"] }
+rusqlite = { version = "0.40", default-features = false, features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
 time = { version = "0.3", features = ["formatting"] }
-tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+tokio = { version = "1", features = ["io-util", "macros", "net", "process", "rt-multi-thread", "sync", "time"] }
 url = "2"
 wreq = { version = "=0.16.1", features = ["cookies", "charset", "gzip", "brotli", "deflate", "zstd"] }
 wreq-util = { version = "=0.2.0", features = ["emulation", "emulation-compression"] }
