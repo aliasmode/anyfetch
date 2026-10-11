@@ -26,7 +26,7 @@ Measured on 2026-10-11 from a cloud server, with no proxy. See [how we measured]
 - **Search and read in one call.** Ask for the content of the top results together with the result list.
 - **Clean Markdown.** Links, tables and code blocks stay intact. Long pages come in parts.
 - **PDFs.** Papers and reports come back as text, page by page.
-- **Sites that need JavaScript.** Fetchroam reads the data inside the page, and uses the site's public API or feed for Stack Overflow, Reddit, X posts, PyPI and crates.io. No browser runs.
+- **Sites that need JavaScript.** Fetchroam reads the data inside the page, and uses the site's public API or feed for Stack Overflow, Reddit, X posts, PyPI and crates.io. No browser runs. For pages that hold nothing without their scripts, it can use Lightpanda, an optional small engine.
 - **Browser-grade requests.** Safari's TLS, HTTP/2 and header fingerprint. A refused fetch is retried automatically, as the same browser or as a second one.
 - **Cloudflare checks.** When a site insists on a JavaScript check, your own Firefox passes it once. After that, Fetchroam reads the site with plain requests.
 - **Fast on repeat.** Several pages in one call, fetched at the same time. A page fetched in the last 15 minutes comes from a local copy.
@@ -257,6 +257,22 @@ Notes:
 - A clearance belongs to the address that earned it, so the browser is not used together with a proxy.
 - Saved clearances are in `~/.config/fetchroam/clearance/`. Delete a file to forget a site.
 
+## Pages that need their scripts
+
+Most pages give Fetchroam their text without JavaScript: it is in the HTML, in the page's data, or behind a public API. A few hold nothing until their scripts run. MSN, Spotify and Airbnb are examples. For those, Fetchroam can use [Lightpanda](https://github.com/lightpanda-io/browser), a small headless engine without a full browser.
+
+Lightpanda is optional and separate. Install it from its README, put `lightpanda` on your `PATH`, and Fetchroam uses it for the pages that need it. In our test, MSN went from no content to 154,000 characters in 12 seconds, and Spotify from no content to 23,000 characters in 3 seconds. Pages that already work are not rendered, so they stay fast.
+
+| Setting | Effect |
+| --- | --- |
+| `FETCHROAM_RENDERER=off` | Never start the renderer. |
+| `FETCHROAM_RENDERER=/path/to/lightpanda` | Use this program. |
+
+Notes:
+
+- Lightpanda makes its own requests. It is not used together with a proxy, and a site with a bot check can refuse it.
+- A rendered application page, such as a feed or a listing, comes back as the whole page in Markdown.
+
 ## Use a proxy
 
 Some sites refuse cloud server addresses whatever the request looks like. If your agent runs on a server, send Fetchroam through a residential proxy. Put one line in `~/.config/fetchroam/proxy`:
@@ -269,7 +285,7 @@ Fetchroam then sends every search and fetch through that HTTP proxy. The file ho
 
 ## What it does not do
 
-Fetchroam itself does not run JavaScript, solve CAPTCHAs or log in. A page that shows its content only after its scripts run, with no data inside the HTML and no public API, returns its title and description. Pages behind a CAPTCHA, a paywall or a sign-in wall stay closed, and Fetchroam says so with an error code.
+Fetchroam itself does not run JavaScript, solve CAPTCHAs or log in. A page that shows its content only after its scripts run, with no data inside the HTML and no public API, returns its title and description unless Lightpanda is installed. Pages behind a CAPTCHA, a paywall or a sign-in wall stay closed, and Fetchroam says so with an error code.
 
 ## Benchmark
 

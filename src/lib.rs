@@ -5,6 +5,7 @@ pub mod clearance;
 pub mod fetch;
 pub mod mcp;
 mod pdf;
+pub mod render;
 pub mod search;
 pub mod transport;
 

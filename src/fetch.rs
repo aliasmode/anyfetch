@@ -1,10 +1,13 @@
-use crate::{ToolError, alternates, cache, pdf, transport};
+use crate::{ToolError, alternates, cache, pdf, render, transport};
 use dom_query::{Document, NodeRef};
 use dom_smoothie::Readability;
 use encoding_rs::{Encoding, UTF_8};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::{collections::HashSet, path::Path};
+use std::{
+    collections::HashSet,
+    path::{Path, PathBuf},
+};
 
 /// Content characters returned when the caller does not ask for a number. Larger answers
 /// overflow the tool-output limit of common agent harnesses.
@@ -15,6 +18,8 @@ pub struct Extracted {
     pub title: String,
     pub description: Option<String>,
     pub content: String,
+    /// The page gave no article and no data, so `content` is only its description.
+    pub summary_only: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -43,10 +48,38 @@ pub struct Options<'a> {
     /// A Firefox-based browser that passes Cloudflare checks which plain requests cannot. See
     /// [`crate::clearance::browser`].
     pub browser: Option<&'a Path>,
+    /// A program that runs a page's scripts and prints the finished HTML, for pages that hold
+    /// no text without them. See [`crate::render::renderer`].
+    pub renderer: Option<&'a Path>,
     /// Keep a copy of each public page for 15 minutes and answer from it.
     pub cache: bool,
     /// Fetch the page again and replace the copy.
     pub fresh: bool,
+}
+
+/// The helper programs found on this machine.
+pub struct Helpers {
+    browser: Option<PathBuf>,
+    renderer: Option<PathBuf>,
+}
+
+impl Helpers {
+    pub fn find() -> Self {
+        Self {
+            browser: crate::clearance::browser(),
+            renderer: render::renderer(),
+        }
+    }
+
+    /// Options for a fetch that uses the helpers and the page cache.
+    pub fn options(&self, fresh: bool) -> Options<'_> {
+        Options {
+            browser: self.browser.as_deref(),
+            renderer: self.renderer.as_deref(),
+            cache: true,
+            fresh,
+        }
+    }
 }
 
 pub async fn fetch(url: &str) -> Result<FetchResponse, ToolError> {
@@ -61,7 +94,7 @@ pub async fn fetch_with(url: &str, options: Options<'_>) -> Result<FetchResponse
     {
         return Ok(page);
     }
-    let page = download(url, options.browser).await?;
+    let page = download(url, options).await?;
     if cache {
         cache::put(&page);
     }
@@ -95,7 +128,7 @@ pub fn pages(
     serde_json::json!({ "pages": entries })
 }
 
-async fn download(url: &str, browser: Option<&Path>) -> Result<FetchResponse, ToolError> {
+async fn download(url: &str, options: Options<'_>) -> Result<FetchResponse, ToolError> {
     if let Ok(parsed) = url::Url::parse(url)
         && let Some(page) = alternates::read(&parsed).await
     {
@@ -111,7 +144,7 @@ async fn download(url: &str, browser: Option<&Path>) -> Result<FetchResponse, To
             content: page.content,
         });
     }
-    let response = transport::get_page(url, supported, browser).await?;
+    let response = transport::get_page(url, supported, options.browser).await?;
     let final_url = response.url;
     let status = response.status;
     let content_type = response.content_type;
@@ -144,7 +177,20 @@ async fn download(url: &str, browser: Option<&Path>) -> Result<FetchResponse, To
             .unwrap_or(UTF_8);
         let (body, _, _) = encoding.decode(&bytes);
         if is_html {
-            let extracted = extract(&body, &final_url)?;
+            let mut extracted = extract(&body, &final_url);
+            // A page with no article and no data needs its scripts. Run them when a renderer
+            // is installed; it makes its own request, so not behind a proxy.
+            let shell = extracted.as_ref().map_or(true, |page| page.summary_only);
+            if shell
+                && let Some(renderer) = options.renderer
+                && transport::direct()
+                && let Some(html) = render::render(renderer, &final_url).await
+                && let Some(page) = extract_rendered(&html, &final_url)
+                && page.content.len() > extracted.as_ref().map_or(0, |plain| plain.content.len())
+            {
+                extracted = Ok(page);
+            }
+            let extracted = extracted?;
             (
                 Some(extracted.title),
                 extracted.description,
@@ -224,7 +270,8 @@ pub fn extract(html: &str, url: &str) -> Result<Extracted, ToolError> {
     };
     // A script-rendered page has no article. Its summary still says what the page is, and its
     // embedded data holds the text that the scripts would show.
-    if content.trim().is_empty() {
+    let mut summary_only = content.trim().is_empty();
+    if summary_only {
         content = description.clone().unwrap_or_default();
     }
     // Embedded data often repeats the article in another form, so a text counts as already
@@ -245,6 +292,7 @@ pub fn extract(html: &str, url: &str) -> Result<Extracted, ToolError> {
         })
         .collect();
     if unseen.iter().map(|text| text.len()).sum::<usize>() > content.len() {
+        summary_only = false;
         content = [content.trim_end()]
             .into_iter()
             .chain(unseen)
@@ -262,7 +310,33 @@ pub fn extract(html: &str, url: &str) -> Result<Extracted, ToolError> {
         title,
         description,
         content,
+        summary_only,
     })
+}
+
+/// Content of a page after its scripts ran. An article is extracted as usual. An application
+/// page (a feed, a listing, a dashboard) has no article, so the whole page is converted when
+/// the article view would lose most of it.
+fn extract_rendered(html: &str, url: &str) -> Option<Extracted> {
+    let document = Document::from(html);
+    let description = description(&document);
+    let title = document.select("title").text().trim().to_owned();
+    plain_code_blocks(&document);
+    document
+        .select("script, style, noscript, template, svg")
+        .remove();
+    document.select("head").remove();
+    let whole = document.md(None).trim().to_owned();
+    match extract(html, url) {
+        Ok(page) if !page.summary_only && page.content.len() * 2 >= whole.len() => Some(page),
+        _ if whole.is_empty() => None,
+        _ => Some(Extracted {
+            title,
+            description,
+            content: whole,
+            summary_only: false,
+        }),
+    }
 }
 
 /// The page's own summary. Script-rendered pages often carry their only server-side text here.

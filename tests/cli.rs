@@ -143,3 +143,68 @@ async fn cli_fetch_sends_a_saved_clearance_for_the_site() {
     assert!(request.contains("user-agent: fakefox/1.0"));
     assert!(request.contains("cookie: cf_clearance=pass"));
 }
+
+/// Plays the renderer: records how it was called and prints the page as its scripts would
+/// leave it.
+#[cfg(unix)]
+const FAKE_RENDERER: &str = r#"#!/bin/sh
+echo "$@" > "$(dirname "$0")/arguments"
+cat <<'HTML'
+<html><head><title>App</title></head><body><article><h1>Dashboard</h1>
+<p>This text exists only after the page's scripts run, so a plain request cannot read it.</p>
+<p>The renderer runs the scripts and prints the finished page for the same extraction.</p>
+<p>A third paragraph gives the article enough length to count as readable content here.</p>
+</article></body></html>
+HTML
+"#;
+
+#[cfg(unix)]
+#[tokio::test]
+async fn cli_fetch_renders_a_page_that_has_no_text_without_its_scripts() {
+    use std::os::unix::fs::PermissionsExt;
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}/app", listener.local_addr().unwrap());
+    let home = std::env::temp_dir().join(format!("fetchroam-render-{}", std::process::id()));
+    std::fs::create_dir_all(&home).unwrap();
+    let renderer = home.join("renderer");
+    std::fs::write(&renderer, FAKE_RENDERER).unwrap();
+    std::fs::set_permissions(&renderer, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let fixture = tokio::spawn(async move {
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let mut request = Vec::new();
+        while !request.ends_with(b"\r\n\r\n") {
+            request.push(socket.read_u8().await.unwrap());
+        }
+        let shell = "<html><head><title>App</title></head><body><div id=root></div><script src=/app.js></script></body></html>";
+        socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{shell}", shell.len()).as_bytes()).await.unwrap();
+    });
+    let output = timeout(
+        Duration::from_secs(10),
+        Command::new(env!("CARGO_BIN_EXE_fetchroam"))
+            .args(["fetch", &url])
+            .env("HOME", &home)
+            .env("FETCHROAM_BROWSER", "off")
+            .env("FETCHROAM_RENDERER", &renderer)
+            .kill_on_drop(true)
+            .output(),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    fixture.await.unwrap();
+    let arguments = std::fs::read_to_string(home.join("arguments")).unwrap();
+    std::fs::remove_dir_all(&home).unwrap();
+    assert!(output.status.success());
+    let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(
+        value["content"]
+            .as_str()
+            .unwrap()
+            .contains("only after the page's scripts run")
+    );
+    assert_eq!(value["title"], "App");
+    assert_eq!(
+        arguments.trim(),
+        format!("fetch --dump html --wait-until networkidle --wait-ms 10000 {url}")
+    );
+}

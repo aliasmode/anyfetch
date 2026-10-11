@@ -16,7 +16,7 @@ const IDENTITIES: [(Profile, Platform); 2] = [
 ];
 
 /// The time one request may take, from connecting to the last byte of the answer.
-const TIMEOUT: Duration = Duration::from_secs(30);
+pub(crate) const TIMEOUT: Duration = Duration::from_secs(30);
 
 /// The identity for requests that carry a clearance from the user's Firefox.
 const FIREFOX: (Profile, Platform) = (Profile::Firefox151, Platform::Linux);
@@ -116,7 +116,7 @@ pub(crate) async fn get_page(
         .ok()
         .and_then(|url| url.host_str().map(str::to_owned));
     // A clearance is tied to the address that earned it, so it is no use behind a proxy.
-    let direct = matches!(proxy(), Ok(None));
+    let direct = direct();
     if direct
         && let Some(host) = &host
         && let Some(saved) = clearance::load(host)
@@ -160,6 +160,11 @@ pub(crate) async fn get_page(
 
 fn cloudflare_challenge(error: &ToolError) -> bool {
     error.code == "challenge_required" && error.status == Some(403)
+}
+
+/// True when requests go straight to the site and not through a proxy.
+pub(crate) fn direct() -> bool {
+    matches!(proxy(), Ok(None))
 }
 
 /// The browser is kept away from addresses that are not public sites.

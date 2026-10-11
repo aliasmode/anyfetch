@@ -1,4 +1,4 @@
-use crate::{ToolError, clearance, fetch, search};
+use crate::{ToolError, fetch, search};
 use rmcp::{
     RoleServer, ServerHandler, ServiceExt,
     handler::server::{router::tool::ToolRouter, wrapper::Parameters},
@@ -86,13 +86,8 @@ impl Server {
             let mut found =
                 search::search_with(&input.query, input.provider, instance, &filters).await?;
             if input.read > 0 {
-                let browser = clearance::browser();
-                let options = fetch::Options {
-                    browser: browser.as_deref(),
-                    cache: true,
-                    fresh: false,
-                };
-                search::read_results(&mut found, input.read, options).await;
+                let helpers = fetch::Helpers::find();
+                search::read_results(&mut found, input.read, helpers.options(false)).await;
             }
             Ok(found)
         })
@@ -109,13 +104,8 @@ impl Server {
         context: RequestContext<RoleServer>,
     ) -> CallToolResult {
         respond(context, async {
-            let browser = clearance::browser();
-            let options = fetch::Options {
-                browser: browser.as_deref(),
-                cache: true,
-                fresh: input.fresh,
-            };
-            let page = fetch::fetch_with(&input.url, options).await?;
+            let helpers = fetch::Helpers::find();
+            let page = fetch::fetch_with(&input.url, helpers.options(input.fresh)).await?;
             let max_chars = input.max_chars.unwrap_or(fetch::DEFAULT_MAX_CHARS);
             Ok(page.window(input.offset, max_chars))
         })
@@ -132,13 +122,8 @@ impl Server {
         context: RequestContext<RoleServer>,
     ) -> CallToolResult {
         respond(context, async {
-            let browser = clearance::browser();
-            let options = fetch::Options {
-                browser: browser.as_deref(),
-                cache: true,
-                fresh: input.fresh,
-            };
-            let pages = fetch::fetch_many(&input.urls, options).await;
+            let helpers = fetch::Helpers::find();
+            let pages = fetch::fetch_many(&input.urls, helpers.options(input.fresh)).await;
             Ok(fetch::pages(&input.urls, pages, input.max_chars))
         })
         .await

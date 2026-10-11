@@ -156,6 +156,7 @@ fn script_rendered_page_falls_back_to_its_title_and_description() {
     .unwrap();
     assert_eq!(page.title, "Video title");
     assert_eq!(page.content, "What the video shows.");
+    assert!(page.summary_only);
     let error = extract(&shell(""), "https://example.org/watch").unwrap_err();
     assert_eq!(error.code, "extraction_failed");
 }

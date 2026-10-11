@@ -1,5 +1,5 @@
 use clap::{Parser, Subcommand, ValueEnum};
-use fetchroam::{clearance, fetch, search};
+use fetchroam::{fetch, search};
 use serde_json::json;
 use std::{io::Write, process::ExitCode};
 
@@ -95,13 +95,8 @@ async fn main() -> ExitCode {
             if read > 0
                 && let Ok(found) = &mut found
             {
-                let browser = clearance::browser();
-                let options = fetch::Options {
-                    browser: browser.as_deref(),
-                    cache: true,
-                    fresh: false,
-                };
-                search::read_results(found, read, options).await;
+                let helpers = fetch::Helpers::find();
+                search::read_results(found, read, helpers.options(false)).await;
             }
             found.map(|value| json!(value))
         }
@@ -112,12 +107,8 @@ async fn main() -> ExitCode {
             fresh,
             ..
         } => {
-            let browser = clearance::browser();
-            let options = fetch::Options {
-                browser: browser.as_deref(),
-                cache: true,
-                fresh,
-            };
+            let helpers = fetch::Helpers::find();
+            let options = helpers.options(fresh);
             if let [url] = urls.as_slice() {
                 let max_chars = max_chars.unwrap_or(fetch::DEFAULT_MAX_CHARS);
                 let page = fetch::fetch_with(url, options).await;
