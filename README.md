@@ -2,6 +2,8 @@
 
 **Web search and web fetch for AI agents. One small binary, no API keys, and it reads the sites that refuse your agent.**
 
+Free and open source, from the makers of [AliasMode](https://aliasmode.com/).
+
 Agent harnesses fetch pages with a bot identity, and a large part of the web answers `403`. Anyfetch sends the request a real browser sends, so your agent gets the page.
 
 | 97 popular sites that block AI agents | Pages read |
@@ -309,9 +311,13 @@ host:port:username:password
 
 Anyfetch then sends every search and fetch through that HTTP proxy. The file holds the password in plain text, so keep it private: `chmod 600 ~/.config/anyfetch/proxy`. Delete the file to go direct again.
 
+Need a proxy? [NobleProxy](https://nobleproxy.com/?utm_source=anyfetch&utm_medium=readme&utm_campaign=anyfetch) is our own service: static residential IPs that only you use, with unlimited bandwidth and HTTP support.
+
 ## What it does not do
 
 Anyfetch itself does not run JavaScript, solve CAPTCHAs or log in. A page that shows its content only after its scripts run, with no data inside the HTML and no public API, returns its title and description unless Lightpanda is installed. Pages behind a CAPTCHA, a paywall or a sign-in wall stay closed, and Anyfetch says so with an error code.
+
+Does your agent need a real browser, with logins and saved sessions? Use [AliasMode](https://aliasmode.com/use-cases/ai-agents/). It is our free, open-source antidetect browser, and it has its own MCP server for agents.
 
 ## Benchmark
 
