@@ -14,7 +14,7 @@ struct Cli {
 enum Command {
     /// Serve web_search and web_fetch over stdio MCP.
     Mcp,
-    /// Search without an API key (experimental). Provider changes are explicit; no automatic fallback.
+    /// Search without an API key. Provider changes are explicit; no automatic fallback.
     Search {
         query: String,
         #[arg(long, value_enum, default_value_t = search::Provider::default())]
@@ -28,6 +28,12 @@ enum Command {
         url: String,
         #[arg(long, value_enum, default_value_t = Format::Json)]
         format: Format,
+        /// First content character to return.
+        #[arg(long, default_value_t = 0)]
+        offset: usize,
+        /// Most content characters to return; the JSON total_chars is the full length.
+        #[arg(long)]
+        max_chars: Option<usize>,
     },
 }
 
@@ -64,7 +70,14 @@ async fn main() -> ExitCode {
         } => search::search(&query, provider, searxng_url.as_deref())
             .await
             .map(|value| json!(value)),
-        Command::Fetch { url, .. } => fetch::fetch(&url).await.map(|value| json!(value)),
+        Command::Fetch {
+            url,
+            offset,
+            max_chars,
+            ..
+        } => fetch::fetch(&url)
+            .await
+            .map(|page| json!(page.window(offset, max_chars))),
     };
     let (value, success) = match result {
         Ok(value) => (value, true),

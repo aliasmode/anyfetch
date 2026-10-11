@@ -71,7 +71,20 @@ async fn follows_redirects_preserves_cookies_and_reports_final_url() {
     assert_eq!(result.content, "hello");
     let requests = worker.join().unwrap();
     assert!(requests[1].to_ascii_lowercase().contains("cookie: test=ok"));
-    assert!(requests[0].contains("Firefox/151.0"));
+    assert!(requests[0].contains("Version/26.4 Safari"));
+}
+
+#[tokio::test]
+async fn returns_feeds_as_text() {
+    let feed = "<feed><entry><title>Post</title></entry></feed>";
+    let (url, worker) = serve(vec![format!(
+        "HTTP/1.1 200 OK\r\nContent-Type: application/atom+xml; charset=UTF-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{feed}",
+        feed.len()
+    )]);
+    let result = fetch(&url).await.unwrap();
+    assert_eq!(result.content, feed);
+    assert_eq!(result.total_chars, feed.len());
+    worker.join().unwrap();
 }
 
 #[tokio::test]
@@ -134,7 +147,7 @@ async fn completes_anubis_with_the_same_session_and_final_response() {
         assert!(fields["elapsedTime"].parse::<f64>().unwrap() >= 0.0);
         assert!(requests[1].contains("verification=fixture"));
         assert!(requests[2].contains("authenticated=fixture"));
-        assert!(requests.iter().all(|r| r.contains("Firefox/151.0")));
+        assert!(requests.iter().all(|r| r.contains("Version/26.4 Safari")));
     }
 }
 
@@ -204,11 +217,38 @@ async fn rejects_unsupported_content_before_reading_the_body() {
 
 #[tokio::test]
 async fn challenge_header_is_not_a_successful_fetch() {
-    let (url, worker) = serve(vec![
-        "HTTP/1.1 200 OK\r\ncf-mitigated: challenge\r\nContent-Type: text/html\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_owned(),
-    ]);
-    let error = fetch(&url).await.unwrap_err();
-    assert_eq!(error.code, "challenge_required");
-    assert_eq!(error.status, Some(200));
-    worker.join().unwrap();
+    for (status, header) in [
+        ("200 OK", "cf-mitigated: challenge"),
+        ("202 Accepted", "x-amzn-waf-action: challenge"),
+    ] {
+        let (url, worker) = serve(vec![format!(
+            "HTTP/1.1 {status}\r\n{header}\r\nContent-Type: text/html\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+        )]);
+        let error = fetch(&url).await.unwrap_err();
+        assert_eq!(error.code, "challenge_required");
+        assert_eq!(error.status, status[..3].parse().ok());
+        worker.join().unwrap();
+    }
+}
+
+#[tokio::test]
+async fn refused_request_is_retried_once_with_the_second_browser_identity() {
+    let page = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 5\r\nConnection: close\r\n\r\nhello";
+    for refusal in ["401 Unauthorized", "403 Forbidden"] {
+        let (url, worker) = serve(vec![
+            format!("HTTP/1.1 {refusal}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"),
+            page.to_owned(),
+        ]);
+        assert_eq!(fetch(&url).await.unwrap().content, "hello");
+        let requests = worker.join().unwrap();
+        assert!(requests[0].contains("Version/26.4 Safari"));
+        assert!(requests[1].contains("Edg/148"));
+    }
+    let refused = "HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+    let limited = "HTTP/1.1 429 Too Many Requests\r\nRetry-After: 17\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+    for (second, code) in [(refused, "http_error"), (limited, "rate_limited")] {
+        let (url, worker) = serve(vec![refused, second]);
+        assert_eq!(fetch(&url).await.unwrap_err().code, code);
+        assert_eq!(worker.join().unwrap().len(), 2);
+    }
 }

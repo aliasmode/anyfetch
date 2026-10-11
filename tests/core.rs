@@ -1,6 +1,6 @@
 use fetchroam::{
     fetch::extract,
-    search::{parse_duckduckgo, parse_results, parse_searxng},
+    search::{parse_duckduckgo, parse_searxng},
 };
 
 #[test]
@@ -83,73 +83,6 @@ async fn searxng_requires_a_valid_instance_before_networking() {
 }
 
 #[test]
-fn search_reads_real_rss_results_with_direct_destinations() {
-    let hits = parse_results(include_str!("fixtures/bing-rss.xml"), 200).unwrap();
-    assert_eq!(hits.len(), 10);
-    assert_eq!(hits[0].url, "https://www.rfc-editor.org/info/rfc6585/");
-    assert!(
-        hits.iter()
-            .all(|hit| !hit.title.is_empty() && !hit.snippet.is_empty())
-    );
-}
-
-#[test]
-fn search_decodes_entities_and_preserves_unicode() {
-    let xml = r#"<rss><channel><item><title>Rust &amp; 日本語</title>
-      <link>https://example.org/guide?x=1&amp;y=2</link>
-      <description><![CDATA[Useful <code> information.]]></description>
-      </item></channel></rss>"#;
-    let hits = parse_results(xml, 200).unwrap();
-    assert_eq!(hits[0].title, "Rust & 日本語");
-    assert_eq!(hits[0].url, "https://example.org/guide?x=1&y=2");
-    assert_eq!(hits[0].snippet, "Useful <code> information.");
-}
-
-#[test]
-fn soft_blocks_and_challenge_pages_are_not_empty_successes() {
-    assert_eq!(
-        parse_results("", 202).unwrap_err().code,
-        "provider_unavailable"
-    );
-    for body in [
-        "<html><form id=challenge-form></form></html>",
-        "<html>Different layout</html>",
-        "<rss>",
-    ] {
-        let error = parse_results(body, 200).unwrap_err();
-        assert_eq!(error.code, "unexpected_response");
-        assert_eq!(error.status, Some(200));
-    }
-}
-
-#[test]
-fn only_recognized_no_results_returns_an_empty_list() {
-    assert!(
-        parse_results("<rss><channel/></rss>", 200)
-            .unwrap()
-            .is_empty()
-    );
-    for body in [
-        "<rss/>",
-        "<html><channel/></html>",
-        "<rss><channel><item><title>Missing link</title></item></channel></rss>",
-        "<rss><channel><item><title>Bad link</title><link>javascript:alert(1)</link></item></channel></rss>",
-    ] {
-        assert!(parse_results(body, 200).is_err());
-    }
-}
-
-#[test]
-fn unexpected_success_status_does_not_override_real_results() {
-    assert_eq!(
-        parse_results(include_str!("fixtures/bing-rss.xml"), 202)
-            .unwrap()
-            .len(),
-        10
-    );
-}
-
-#[test]
 fn article_extraction_keeps_links_code_and_tables() {
     let paragraphs = "<p>This reference explains how to build a useful command line research tool. It describes its configuration, expected outputs, and reusable interfaces. The examples below contain the details needed to complete the task.</p>".repeat(5);
     let html = format!(
@@ -167,4 +100,62 @@ fn article_extraction_keeps_links_code_and_tables() {
     assert!(result.content.contains("query"));
     assert!(result.content.contains("|"));
     assert!(!result.content.contains("Account login"));
+}
+
+#[test]
+fn extraction_reports_the_page_description() {
+    let body = "<p>A script-rendered profile shell that still has enough plain words for readable extraction.</p>".repeat(5);
+    for (meta, expected) in [
+        (
+            r#"<meta property="og:description" content="Open graph"><meta name="description" content=" Profile bio ">"#,
+            Some("Profile bio"),
+        ),
+        (
+            r#"<meta property="og:description" content="Open graph">"#,
+            Some("Open graph"),
+        ),
+        ("", None),
+    ] {
+        let html = format!(
+            "<html><head><title>Profile</title>{meta}</head><body><article>{body}</article></body></html>"
+        );
+        let result = extract(&html, "https://example.org/profile").unwrap();
+        assert_eq!(result.description.as_deref(), expected);
+    }
+}
+
+#[test]
+fn script_rendered_page_falls_back_to_its_title_and_description() {
+    let shell = |meta: &str| {
+        format!(
+            "<html><head><title> Video title </title>{meta}</head><body><div id=app></div><script>render()</script></body></html>"
+        )
+    };
+    let page = extract(
+        &shell(r#"<meta name="description" content="What the video shows.">"#),
+        "https://example.org/watch",
+    )
+    .unwrap();
+    assert_eq!(page.title, "Video title");
+    assert_eq!(page.content, "What the video shows.");
+    let error = extract(&shell(""), "https://example.org/watch").unwrap_err();
+    assert_eq!(error.code, "extraction_failed");
+}
+
+#[test]
+fn extraction_keeps_wrapped_and_line_split_code_blocks() {
+    let prose = "<p>This guide explains how to configure the tool. It lists each option, the expected values, and the commands that apply the change.</p>".repeat(4);
+    let html = format!(
+        r#"<html><head><title>Guide</title></head><body><article><h1>Guide</h1>{prose}
+<div class="code-block"><div class="overflow-y-hidden scroll-area"><div><pre class="shiki" language="bash"><code><span class="line"><span>tool add one</span></span>
+<span class="line"></span>
+<span class="line"><span>tool run</span></span></code></pre></div></div></div>{prose}
+<figure><figcaption>config.json</figcaption><pre data-language="json"><code><div class="ec-line"><div class="code"><span>{{</span></div></div><div class="ec-line"><div class="code"><span class="indent">  </span><span>"a": 1</span></div></div><div class="ec-line"><div class="code"><span>}}</span></div></div></code></pre></figure>{prose}
+<pre><code class="language-sh"><span class="token-line">first<br></span><span class="code-line" data-line="2">second <span class="hl">cmd</span></span><span class="code-line" data-line="3">third</span></code></pre>
+</article></body></html>"#
+    );
+    let content = extract(&html, "https://example.org/guide").unwrap().content;
+    assert!(content.contains("```bash\ntool add one\n\ntool run\n```"));
+    assert!(content.contains("```json\n{\n  \"a\": 1\n}\n```"));
+    assert!(content.contains("```sh\nfirst\nsecond cmd\nthird\n```"));
 }

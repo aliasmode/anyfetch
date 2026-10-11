@@ -1,7 +1,6 @@
 use crate::{ToolError, transport};
 use clap::ValueEnum;
 use rmcp::schemars;
-use roxmltree::Document;
 use serde::{Deserialize, Serialize};
 use url::Url;
 
@@ -11,7 +10,6 @@ use url::Url;
 pub enum Provider {
     #[default]
     Duckduckgo,
-    Bing,
     Searxng,
 }
 
@@ -19,7 +17,6 @@ impl Provider {
     pub fn name(self) -> &'static str {
         match self {
             Self::Duckduckgo => "duckduckgo",
-            Self::Bing => "bing",
             Self::Searxng => "searxng",
         }
     }
@@ -33,7 +30,6 @@ impl Provider {
         };
         let mut url = match self {
             Self::Duckduckgo => Url::parse("https://html.duckduckgo.com/html/").unwrap(),
-            Self::Bing => Url::parse("https://www.bing.com/search").unwrap(),
             Self::Searxng => {
                 let mut url = Url::parse(instance.ok_or_else(invalid)?).map_err(|_| invalid())?;
                 if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none() {
@@ -46,14 +42,8 @@ impl Provider {
             }
         };
         url.query_pairs_mut().append_pair("q", query);
-        match self {
-            Self::Bing => {
-                url.query_pairs_mut().append_pair("format", "rss");
-            }
-            Self::Searxng => {
-                url.query_pairs_mut().append_pair("format", "json");
-            }
-            Self::Duckduckgo => {}
+        if matches!(self, Self::Searxng) {
+            url.query_pairs_mut().append_pair("format", "json");
         }
         Ok(url)
     }
@@ -93,7 +83,6 @@ pub async fn search(
         let body = response.text();
         let results = match provider {
             Provider::Duckduckgo => parse_duckduckgo(&body, response.status),
-            Provider::Bing => parse_results(&body, response.status),
             Provider::Searxng => parse_searxng(&body, response.status),
         }?;
         Ok(SearchResponse {
@@ -127,7 +116,7 @@ pub fn parse_duckduckgo(html: &str, status: u16) -> Result<Vec<SearchHit>, ToolE
     {
         return Err(error(
             "challenge_required",
-            "DuckDuckGo requires a challenge; select another provider explicitly",
+            "DuckDuckGo answered this query with a challenge; use the searxng provider or a proxy",
         ));
     }
     let unexpected = || {
@@ -210,53 +199,6 @@ pub fn parse_searxng(body: &str, status: u16) -> Result<Vec<SearchHit>, ToolErro
         .collect()
 }
 
-pub fn parse_results(xml: &str, status: u16) -> Result<Vec<SearchHit>, ToolError> {
-    let unexpected = || ToolError {
-        status: Some(status),
-        ..ToolError::new(
-            if status == 202 {
-                "provider_unavailable"
-            } else {
-                "unexpected_response"
-            },
-            "Bing did not return recognizable RSS search results",
-        )
-    };
-    let document = Document::parse(xml).map_err(|_| unexpected())?;
-    let root = document.root_element();
-    if !root.has_tag_name("rss") {
-        return Err(unexpected());
-    }
-    let channel = root
-        .children()
-        .find(|node| node.has_tag_name("channel"))
-        .ok_or_else(unexpected)?;
-    channel
-        .children()
-        .filter(|node| node.has_tag_name("item"))
-        .map(|item| {
-            let text = |name| {
-                item.children()
-                    .find(|node| node.has_tag_name(name))
-                    .and_then(|node| node.text())
-                    .unwrap_or("")
-                    .trim()
-                    .to_owned()
-            };
-            let title = text("title");
-            let url = Url::parse(&text("link")).map_err(|_| unexpected())?;
-            if title.is_empty() || !matches!(url.scheme(), "http" | "https") {
-                return Err(unexpected());
-            }
-            Ok(SearchHit {
-                title,
-                url: url.into(),
-                snippet: text("description"),
-            })
-        })
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -266,7 +208,6 @@ mod tests {
         assert_eq!(Provider::default().name(), "duckduckgo");
         for (provider, host, path, format) in [
             (Provider::Duckduckgo, "html.duckduckgo.com", "/html/", None),
-            (Provider::Bing, "www.bing.com", "/search", Some("rss")),
             (
                 Provider::Searxng,
                 "example.org",

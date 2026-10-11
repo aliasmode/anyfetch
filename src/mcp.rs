@@ -23,6 +23,11 @@ struct SearchInput {
 #[derive(Deserialize, schemars::JsonSchema)]
 struct FetchInput {
     url: String,
+    /// First content character to return. Use with max_chars to read a long page in parts.
+    #[serde(default)]
+    offset: usize,
+    /// Most content characters to return. total_chars in the result is the full length.
+    max_chars: Option<usize>,
 }
 
 #[derive(Clone)]
@@ -40,7 +45,7 @@ impl Server {
 
     #[tool(
         name = "web_search",
-        description = "Experimental no-key search. Defaults to DuckDuckGo. Select bing or searxng explicitly to try another provider; no automatic fallback. SearXNG requires searxng_url and an instance with JSON enabled. Returns source URLs and snippets."
+        description = "No-key web search. Defaults to DuckDuckGo. Select searxng explicitly to use your own instance; no automatic fallback. SearXNG requires searxng_url and an instance with JSON enabled. Returns source URLs and snippets."
     )]
     async fn web_search(
         &self,
@@ -56,14 +61,18 @@ impl Server {
 
     #[tool(
         name = "web_fetch",
-        description = "Fetch a URL without a browser. Returns readable Markdown or plain text. Does not run JavaScript."
+        description = "Fetch a URL without a browser. Returns readable Markdown or plain text. Does not run JavaScript. Read a long page in parts with max_chars and offset."
     )]
     async fn web_fetch(
         &self,
         Parameters(input): Parameters<FetchInput>,
         context: RequestContext<RoleServer>,
     ) -> CallToolResult {
-        respond(context, fetch::fetch(&input.url)).await
+        respond(context, async {
+            let page = fetch::fetch(&input.url).await?;
+            Ok(page.window(input.offset, input.max_chars))
+        })
+        .await
     }
 }
 
@@ -72,6 +81,10 @@ impl ServerHandler for Server {
     fn get_info(&self) -> ServerInfo {
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
             .with_server_info(Implementation::new("fetchroam", env!("CARGO_PKG_VERSION")))
+            .with_instructions(
+                "Web search and page fetch for research. Requests look like a real browser, so \
+                 web_fetch reads many sites that refuse default AI fetchers. No JavaScript runs.",
+            )
     }
 }
 

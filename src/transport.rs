@@ -1,15 +1,58 @@
 use crate::{ToolError, anubis};
 use encoding_rs::{Encoding, UTF_8};
-use wreq::{Client, Response};
-use wreq_util::{Emulation, Profile};
+use wreq::{Client, NoProxy, Proxy, Response};
+use wreq_util::{Emulation, Platform, Profile};
 
-pub fn client() -> Result<Client, ToolError> {
-    Ok(Client::builder()
-        .emulation(Emulation::builder().profile(Profile::Firefox151).build())
+/// Browser identities in the order tried. Measured on 97 bot-filtered sites (2026-10-11), Safari
+/// read the most; some DataDome sites accepted only a Chromium identity on Windows.
+const IDENTITIES: [(Profile, Platform); 2] = [
+    (Profile::Safari26_4, Platform::MacOS),
+    (Profile::Edge148, Platform::Windows),
+];
+
+fn client((profile, platform): (Profile, Platform)) -> Result<Client, ToolError> {
+    let mut builder = Client::builder()
+        .emulation(
+            Emulation::builder()
+                .profile(profile)
+                .platform(platform)
+                .build(),
+        )
         .cookie_store(true)
         .redirect(wreq::redirect::Policy::default())
-        .no_proxy()
-        .build()?)
+        .no_proxy();
+    if let Some(proxy) = proxy()? {
+        builder = builder.proxy(proxy);
+    }
+    Ok(builder.build()?)
+}
+
+/// Optional HTTP proxy from `~/.config/fetchroam/proxy`: one `host:port:username:password` line.
+fn proxy() -> Result<Option<Proxy>, ToolError> {
+    let Some(home) = std::env::home_dir() else {
+        return Ok(None);
+    };
+    let Ok(line) = std::fs::read_to_string(home.join(".config/fetchroam/proxy")) else {
+        return Ok(None);
+    };
+    let invalid = || {
+        ToolError::new(
+            "proxy_error",
+            "The proxy file must contain host:port:username:password",
+        )
+    };
+    let mut parts = line.trim().splitn(4, ':');
+    let (Some(host), Some(port), Some(username), Some(password)) =
+        (parts.next(), parts.next(), parts.next(), parts.next())
+    else {
+        return Err(invalid());
+    };
+    Ok(Some(
+        Proxy::all(format!("http://{host}:{port}"))
+            .map_err(|_| invalid())?
+            .basic_auth(username, password)
+            .no_proxy(NoProxy::from_string("localhost,127.0.0.1,::1")),
+    ))
 }
 
 pub(crate) struct Body {
@@ -35,7 +78,31 @@ impl Body {
 }
 
 pub(crate) async fn get(url: &str, accept: fn(&str) -> bool) -> Result<Body, ToolError> {
-    let client = client()?;
+    attempt(url, accept, IDENTITIES[0]).await
+}
+
+/// Like `get`, but a refused page is requested once more as the second browser identity.
+pub(crate) async fn get_page(url: &str, accept: fn(&str) -> bool) -> Result<Body, ToolError> {
+    match get(url, accept).await {
+        Err(error) if matches!(error.status, Some(401 | 403)) => {
+            match attempt(url, accept, IDENTITIES[1]).await {
+                Err(retry) if matches!(retry.code, "challenge_required" | "rate_limited") => {
+                    Err(retry)
+                }
+                Err(_) => Err(error),
+                page => page,
+            }
+        }
+        result => result,
+    }
+}
+
+async fn attempt(
+    url: &str,
+    accept: fn(&str) -> bool,
+    identity: (Profile, Platform),
+) -> Result<Body, ToolError> {
+    let client = client(identity)?;
     let (body, challenge) = read(client.get(url).send().await?, false, accept).await?;
     let Some(challenge) = challenge else {
         return Ok(body);
@@ -123,10 +190,11 @@ async fn read(
 
 pub fn check_response(response: &Response) -> Result<(), ToolError> {
     let status = response.status().as_u16();
-    let challenge = response
-        .headers()
+    let headers = response.headers();
+    let challenge = headers
         .get("cf-mitigated")
-        .is_some_and(|value| value == "challenge");
+        .is_some_and(|value| value == "challenge")
+        || headers.contains_key("x-amzn-waf-action");
     let code = if challenge {
         "challenge_required"
     } else if status == 429 {

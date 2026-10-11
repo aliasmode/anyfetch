@@ -125,7 +125,7 @@ async fn stdio_exposes_two_tools_and_preserves_results_and_errors() {
             );
             assert_eq!(
                 tool["inputSchema"]["$defs"]["Provider"]["enum"],
-                json!(["duckduckgo", "bing", "searxng"])
+                json!(["duckduckgo", "searxng"])
             );
         }
     }
@@ -160,7 +160,7 @@ async fn stdio_exposes_two_tools_and_preserves_results_and_errors() {
         session
             .send(
                 json!({"jsonrpc":"2.0","id":id,"method":"tools/call","params":{
-                    "name":"web_fetch","arguments":{"url":url}
+                    "name":"web_fetch","arguments":{"url":url,"offset":1,"max_chars":3}
                 }}),
             )
             .await;
@@ -180,7 +180,8 @@ async fn stdio_exposes_two_tools_and_preserves_results_and_errors() {
                 assert_eq!(structured["error"]["retry_after"], "17");
             }
         } else {
-            assert_eq!(structured["content"], "hello");
+            assert_eq!(structured["content"], "ell");
+            assert_eq!(structured["total_chars"], 5);
             assert_eq!(structured["url"], url);
             assert!(structured["retrieved_at"].as_str().unwrap().ends_with('Z'));
         }

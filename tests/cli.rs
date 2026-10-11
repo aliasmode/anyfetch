@@ -65,3 +65,40 @@ async fn cli_uses_the_selected_searxng_instance() {
             .starts_with("GET /nested/search?q=query&format=json ")
     );
 }
+
+#[tokio::test]
+async fn cli_sends_requests_through_the_proxy_file() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let home = std::env::temp_dir().join(format!("fetchroam-proxy-{}", std::process::id()));
+    let config = home.join(".config/fetchroam");
+    std::fs::create_dir_all(&config).unwrap();
+    let proxy = format!("{}:user:pa:ss\n", listener.local_addr().unwrap());
+    std::fs::write(config.join("proxy"), proxy).unwrap();
+    let fixture = tokio::spawn(async move {
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let mut request = Vec::new();
+        while !request.ends_with(b"\r\n\r\n") {
+            request.push(socket.read_u8().await.unwrap());
+        }
+        let body = r#"{"results":[]}"#;
+        socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes()).await.unwrap();
+        String::from_utf8(request).unwrap()
+    });
+    let output = timeout(
+        Duration::from_secs(10),
+        command()
+            .env("HOME", &home)
+            .env("USERPROFILE", &home)
+            .args(["query", "--provider", "searxng"])
+            .args(["--searxng-url", "http://searx.test"])
+            .output(),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    std::fs::remove_dir_all(&home).unwrap();
+    assert!(output.status.success());
+    let request = fixture.await.unwrap();
+    assert!(request.starts_with("GET http://searx.test/search?q=query&format=json "));
+    assert!(request.contains("Basic dXNlcjpwYTpzcw=="));
+}
