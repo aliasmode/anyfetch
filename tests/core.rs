@@ -196,6 +196,72 @@ fn article_is_not_replaced_by_its_smaller_embedded_data() {
 }
 
 #[test]
+fn home_page_yields_its_headlines_with_their_links() {
+    let card = |n: usize| {
+        format!(
+            r#"<li><a href="/story/{n}"><div>Headline number {n} of the day</div><span>World</span></a></li>"#
+        )
+    };
+    let cards: String = (1..=40).map(card).collect();
+    let about = "<p>Daily News reports from every region, with reporters in forty cities. Our readers get the facts first, and then the background that explains them.</p>".repeat(4);
+    let html = format!(
+        r##"<html><head><title>Daily News</title></head><body>
+        <header><a href="#main">Skip to content</a><nav><a href="/sport">Sport</a></nav><button>Sign in</button></header>
+        <main id="main"><h2>Top stories</h2><ul>{cards}</ul>
+        <div><a href="/live/1">Live: first event</a><a href="https://other.example/live/2">Live: second event</a></div>
+        <ul><li></li>{again}</ul>
+        <div hidden>Menu drawer</div><div style="display:none">Feedback form</div><textarea>{{"data":1}}</textarea>
+        <section><h2>About us</h2>{about}</section></main>
+        <aside><a href="/most-read">Most read</a></aside><footer><a href="/terms">Terms of use</a></footer>
+        <div hidden id="S:0"><h3><a href="/story/99">A headline that React sends late</a></h3></div>
+        <script>$RC("B:0","S:0")</script></body></html>"##,
+        again = card(1),
+    );
+    let content = extract(&html, "https://example.org/").unwrap().content;
+    let at = |text: &str| content.find(text).unwrap_or_else(|| panic!("no {text}"));
+    let first = at("[Headline number 1 of the day World](https://example.org/story/1)");
+    let last = at("[Headline number 40 of the day World](https://example.org/story/40)");
+    assert!(at("## Top stories") < first && first < last && last < at("## About us"));
+    assert!(content.contains(
+        "[Live: first event](https://example.org/live/1)  \n[Live: second event](https://other.example/live/2)"
+    ));
+    assert!(content.contains("Daily News reports from every region"));
+    assert!(content.contains("[A headline that React sends late](https://example.org/story/99)"));
+    assert_eq!(content.matches("/story/1)").count(), 1);
+    assert!(!content.contains("\n-\n"));
+    for hidden in [
+        "Skip to content",
+        "Sport",
+        "Sign in",
+        "Menu drawer",
+        "Feedback form",
+        "data",
+        "Most read",
+        "Terms of use",
+        "$RC",
+    ] {
+        assert!(!content.contains(hidden), "{hidden}");
+    }
+}
+
+#[test]
+fn article_is_not_replaced_by_the_links_around_it() {
+    let paragraphs = "<p>This reference explains how to build a useful command line research tool. It describes its configuration, expected outputs, and reusable interfaces.</p>".repeat(4);
+    let more: String = (1..=12)
+        .map(|n| format!(r#"<li><a href="/story/{n}">More story {n} to read next</a></li>"#))
+        .collect();
+    let html = format!(
+        r#"<html><head><title>Reference</title></head><body><article><h1>Reference</h1>{paragraphs}</article>
+        <div class="more"><h2>More</h2><ul>{more}</ul></div></body></html>"#
+    );
+    let content = extract(&html, "https://example.org/reference")
+        .unwrap()
+        .content;
+    assert!(content.contains("command line research tool"));
+    assert!(!content.contains("More story"));
+}
+
+#[test]
 fn extraction_keeps_wrapped_and_line_split_code_blocks() {
     let prose = "<p>This guide explains how to configure the tool. It lists each option, the expected values, and the commands that apply the change.</p>".repeat(4);
     let html = format!(

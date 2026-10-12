@@ -22,7 +22,8 @@ pub struct Extracted {
     pub title: String,
     pub description: Option<String>,
     pub content: String,
-    /// The page gave no article and no data, so `content` is only its description.
+    /// The page gave no article and no data. `content` is its description, or what the page
+    /// shows around its scripts.
     pub summary_only: bool,
 }
 
@@ -162,7 +163,7 @@ async fn download(url: &str, options: Options<'_>) -> Result<FetchResponse, Tool
     {
         return Ok(FetchResponse {
             requested_url: url.to_owned(),
-            url: url.to_owned(),
+            url: page.source.unwrap_or_else(|| url.to_owned()),
             status: 200,
             content_type: "text/markdown".to_owned(),
             retrieved_at: crate::retrieved_at(),
@@ -173,7 +174,8 @@ async fn download(url: &str, options: Options<'_>) -> Result<FetchResponse, Tool
             focused: false,
         });
     }
-    let response = transport::get_page(url, supported, options.browser).await?;
+    let address = alternates::same_page(url).unwrap_or(url);
+    let response = transport::get_page(address, supported, options.browser).await?;
     let final_url = response.url;
     let status = response.status;
     let content_type = response.content_type;
@@ -295,6 +297,8 @@ pub fn extract(html: &str, url: &str) -> Result<Extracted, ToolError> {
     let page_title = document.select("title").text().trim().to_owned();
     let (embedded, bodies) = embedded_text(&document);
     plain_code_blocks(&document);
+    // Readability takes the document apart, so the page view gets a copy.
+    let page = document.clone();
     let article = Readability::with_document(document, Some(url), None)
         .and_then(|mut readability| readability.parse());
     let (title, mut content) = match article {
@@ -354,6 +358,19 @@ pub fn extract(html: &str, url: &str) -> Result<Extracted, ToolError> {
             .collect::<Vec<_>>()
             .join("\n\n");
     }
+    // A home page or a listing has many headlines and no single article, so Readability keeps
+    // a small part of it or nothing. When the page shows over five times more, and half of
+    // its lines or more are links, return what it shows. A short article above a long
+    // comment thread is not such a page. A page shows less than its HTML holds, so a long
+    // article skips this check.
+    if html.len() > content.len() * 5 {
+        let whole = page_view(&page, url);
+        let lines = || whole.lines().filter(|line| !line.trim().is_empty());
+        let links = lines().filter(|line| line.contains("](")).count();
+        if whole.len() > content.len() * 5 && links * 2 >= lines().count() {
+            content = whole;
+        }
+    }
     if content.trim().is_empty() {
         return Err(ToolError::new(
             "extraction_failed",
@@ -391,6 +408,56 @@ fn extract_rendered(html: &str, url: &str) -> Option<Extracted> {
             summary_only: false,
         }),
     }
+}
+
+/// What a home page or a listing shows, as Markdown: its headings, text and links in page
+/// order, without scripts, styles, images, controls and navigation. Links are absolute.
+fn page_view(document: &Document, url: &str) -> String {
+    // React sends the late parts of a page as hidden elements with an id such as "S:1", and a
+    // script shows them. They are content; all other hidden elements are not shown.
+    document
+        .select(
+            "head, script, style, noscript, template, dialog, [hidden]:not([id^='S:']), \
+             [style*='display:none'], [style*='display: none'], svg, img, button, select, \
+             textarea, nav, aside, footer, [role=navigation], [role=complementary], \
+             [role=contentinfo], [role=banner], \
+             header:not(article header, section header, main header)",
+        )
+        .remove();
+    let base = url::Url::parse(url).ok();
+    for link in document.select("a[href]").nodes() {
+        // The words of a link, without the elements that the page puts around each part.
+        let mut label = String::new();
+        for part in link.descendants_it().filter(NodeRef::is_text) {
+            label.extend(part.text().split_whitespace().flat_map(|word| [word, " "]));
+        }
+        link.set_text(label.trim_end());
+        let target = link.attr("href").zip(base.as_ref());
+        if let Some(target) = target.and_then(|(href, base)| base.join(&href).ok()) {
+            link.set_attr("href", target.as_str());
+        }
+        // Links that touch get a line each.
+        if link.next_sibling().is_some_and(|next| next.has_name("a")) {
+            link.after_html("<br>");
+        }
+    }
+    // A list item or a spot that scripts fill later leaves a line with no words, and a page
+    // can show one link in several places. Drop those lines, but keep every line of code.
+    let markdown = document.md(None);
+    let (mut view, mut code, mut seen) = (String::new(), false, HashSet::new());
+    for line in markdown.lines() {
+        let fence = line.trim_start().starts_with("```");
+        let words = line.chars().any(char::is_alphanumeric);
+        let repeated = line.contains("](") && !seen.insert(line);
+        if code || fence || (words && !repeated) {
+            view.push_str(line);
+            view.push('\n');
+        } else if !view.ends_with("\n\n") {
+            view.push('\n');
+        }
+        code ^= fence;
+    }
+    view.trim().to_owned()
 }
 
 /// The page's own summary. Script-rendered pages often carry their only server-side text here.

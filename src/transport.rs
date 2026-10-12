@@ -1,5 +1,5 @@
 use crate::{
-    ToolError, anubis,
+    ToolError, anubis, challenge,
     clearance::{self, Clearance},
 };
 use encoding_rs::{Encoding, UTF_8};
@@ -25,8 +25,8 @@ fn client(
     (profile, platform): (Profile, Platform),
     cleared: Option<(&Clearance, &str)>,
     direct: bool,
-) -> Result<Client, ToolError> {
-    let jar = Jar::default();
+) -> Result<(Client, Arc<Jar>), ToolError> {
+    let jar = Arc::new(Jar::default());
     for cookie in cleared.iter().flat_map(|(clearance, _)| &clearance.cookies) {
         let (name, value) = (&cookie.name, &cookie.value);
         let domain = cookie.domain.trim_start_matches('.');
@@ -40,14 +40,14 @@ fn client(
                 .platform(platform)
                 .build(),
         )
-        .cookie_provider(Arc::new(jar))
+        .cookie_provider(jar.clone())
         .redirect(wreq::redirect::Policy::default())
         .timeout(TIMEOUT)
         .no_proxy();
     if !direct && let (Some(proxy), _) = proxy()? {
         builder = builder.proxy(proxy);
     }
-    Ok(builder.build()?)
+    Ok((builder.build()?, jar))
 }
 
 /// Optional HTTP proxy from `~/.config/anyfetch/proxy`: one `host:port:username:password` line.
@@ -99,12 +99,8 @@ async fn routed<F: Future<Output = Result<Body, ToolError>>>(
 }
 
 fn refused(error: &ToolError) -> bool {
-    let codes = [
-        "challenge_required",
-        "rate_limited",
-        "network_error",
-        "timeout",
-    ];
+    // A slow site is slow on both routes, so a timeout is not a refusal.
+    let codes = ["challenge_required", "rate_limited", "network_error"];
     codes.contains(&error.code) || matches!(error.status, Some(401..=403))
 }
 
@@ -132,6 +128,28 @@ impl Body {
 
 pub(crate) async fn get(url: &str, accept: fn(&str) -> bool) -> Result<Body, ToolError> {
     routed(|direct| attempt(url, accept, IDENTITIES[0], None, direct)).await
+}
+
+/// One request to a data address of a site, with the headers that the site's own pages send.
+/// Some of these answer only a visitor of the site: with `entry`, the same client opens that
+/// page first.
+pub(crate) async fn get_with(
+    url: &str,
+    headers: &[(&str, &str)],
+    entry: Option<&str>,
+) -> Result<Body, ToolError> {
+    routed(|direct| async move {
+        let (client, jar) = client(IDENTITIES[0], None, direct)?;
+        if let Some(entry) = entry {
+            open(&client, &jar, entry, |_| true, None).await?;
+        }
+        let mut request = client.get(url);
+        for (name, value) in headers {
+            request = request.header(*name, *value);
+        }
+        Ok(read(request.send().await?, true, |_| true).await?.0)
+    })
+    .await
 }
 
 /// Like `get`, but retries a refused page. Cloudflare's verdict on one identical request varies
@@ -227,22 +245,53 @@ async fn attempt(
     cleared: Option<&Clearance>,
     direct: bool,
 ) -> Result<Body, ToolError> {
-    let client = client(identity, cleared.map(|clearance| (clearance, url)), direct)?;
-    let get = |target: &str| match cleared {
-        Some(clearance) => client
-            .get(target)
-            .header("user-agent", &clearance.user_agent),
+    let (client, jar) = client(identity, cleared.map(|clearance| (clearance, url)), direct)?;
+    let agent = cleared.map(|clearance| clearance.user_agent.as_str());
+    open(&client, &jar, url, accept, agent).await
+}
+
+/// What a page asks a browser to do before it shows its content.
+enum Check {
+    Anubis(anubis::Challenge),
+    /// Set this cookie and ask for the page again.
+    Cookie(String),
+    /// Ask for the page with this query.
+    Query(String),
+}
+
+/// Asks for `url` in `client`. If the answer is a bot check that a plain client can pass, does
+/// what the check asks for and returns the page that follows.
+async fn open(
+    client: &Client,
+    jar: &Jar,
+    url: &str,
+    accept: fn(&str) -> bool,
+    agent: Option<&str>,
+) -> Result<Body, ToolError> {
+    let get = |target: &str| match agent {
+        Some(agent) => client.get(target).header("user-agent", agent),
         None => client.get(target),
     };
-    let (body, challenge) = read(get(url).send().await?, false, accept).await?;
-    let Some(challenge) = challenge else {
-        return Ok(body);
+    let (body, check) = read(get(url).send().await?, false, accept).await?;
+    let next = match check {
+        None => return Ok(body),
+        Some(Check::Anubis(challenge)) => challenge.completion_url(&body.url).await?.into(),
+        Some(Check::Cookie(cookie)) => {
+            jar.add(format!("{cookie}; Path=/"), body.url.as_str());
+            body.url.clone()
+        }
+        Some(Check::Query(query)) => {
+            let mut page = Url::parse(&body.url)
+                .map_err(|_| ToolError::new("network_error", "The page has no valid address"))?;
+            page.set_query(Some(&query));
+            page.into()
+        }
     };
-    let completion = challenge.completion_url(&body.url).await?;
-    let response = get(completion.as_str())
+    let response = get(&next)
+        .header("referer", &body.url)
         .send()
         .await
-        .map_err(|_| ToolError::new("network_error", "Anubis completion request failed"))?;
+        .map_err(|_| ToolError::new("network_error", "The request after the bot check failed"))?;
     Ok(read(response, true, accept).await?.0)
 }
 
@@ -250,7 +299,7 @@ async fn read(
     response: Response,
     completed: bool,
     accept: fn(&str) -> bool,
-) -> Result<(Body, Option<anubis::Challenge>), ToolError> {
+) -> Result<(Body, Option<Check>), ToolError> {
     let status = response.status().as_u16();
     let error = check_response(&response).err();
     let content_type = response
@@ -310,7 +359,20 @@ async fn read(
                 )
             });
         }
-        return Ok((body, Some(challenge)));
+        return Ok((body, Some(Check::Anubis(challenge))));
+    }
+    if is_html {
+        let page = body.text();
+        let check = challenge::cookie(&page).map(Check::Cookie);
+        if let Some(check) = check.or_else(|| challenge::doubled(&page).map(Check::Query)) {
+            if completed {
+                return Err(ToolError {
+                    status: Some(status),
+                    ..ToolError::new("challenge_failed", "The bot check remains after its step")
+                });
+            }
+            return Ok((body, Some(check)));
+        }
     }
     if let Some(error) = error {
         return Err(error);

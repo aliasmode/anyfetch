@@ -1,6 +1,7 @@
 mod alternates;
 mod anubis;
 mod cache;
+mod challenge;
 pub mod clearance;
 pub mod fetch;
 mod focus;

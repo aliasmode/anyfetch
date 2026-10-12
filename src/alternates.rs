@@ -14,6 +14,8 @@ use url::Url;
 pub(crate) struct Page {
     pub title: String,
     pub content: String,
+    /// The address that was read, when it holds another form of the page: a feed.
+    pub source: Option<String>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -23,8 +25,12 @@ enum Route {
     Tweet(String),
     PyPi(String),
     Crate(String),
-    /// The Atom feed of a Reddit listing or comment thread.
+    /// A Reddit listing or comment thread, by its path.
     Reddit(String),
+    /// A title on IMDb, by its id.
+    Imdb(String),
+    /// A feed that holds what a home page shows.
+    Feed(&'static str),
     /// The data of a Reuters article page.
     Reuters(String),
 }
@@ -44,9 +50,16 @@ fn route(url: &Url) -> Option<Route> {
         ("crates.io", ["crates", name]) => Some(Route::Crate(name.to_string())),
         // A subreddit listing or a comment thread; other Reddit pages have no such feed.
         ("reddit.com" | "old.reddit.com", ["r", _] | ["r", _, "comments", ..]) => {
-            let path = url.path().trim_end_matches('/');
-            Some(Route::Reddit(format!("https://www.reddit.com{path}/.rss")))
+            Some(Route::Reddit(url.path().trim_end_matches('/').to_owned()))
         }
+        // IMDb answers every page with a bot check. Its pages get their data from this API.
+        ("imdb.com" | "m.imdb.com", ["title", id, ..])
+            if id.strip_prefix("tt").is_some_and(number) =>
+        {
+            Some(Route::Imdb(id.to_string()))
+        }
+        // The Economist answers its home page with a bot check, and its feed without one.
+        ("economist.com", []) => Some(Route::Feed("https://www.economist.com/latest/rss.xml")),
         // Reuters answers an article page with a bot check, but gives the data of that page.
         ("reuters.com", [.., slug]) if dated(slug) => {
             let path = url.path();
@@ -99,6 +112,7 @@ pub(crate) async fn read(url: &Url) -> Option<Page> {
             Some(Page {
                 title: format!("{} {}", info["name"].as_str()?, text(&info["version"])),
                 content: [text(&info["summary"]), text(&info["description"])].join("\n\n"),
+                source: None,
             })
         }
         Route::Crate(name) => {
@@ -115,11 +129,52 @@ pub(crate) async fn read(url: &Url) -> Option<Page> {
             Some(Page {
                 title: format!("{} {version}", package["name"].as_str()?),
                 content: [summary.as_str(), &links.join("\n"), &readme].join("\n\n"),
+                source: None,
             })
         }
-        Route::Reddit(feed) => {
-            let body = transport::get(&feed, |_| true).await.ok()?;
+        Route::Reddit(path) => {
+            let page = format!("https://www.reddit.com{path}/");
+            // The data answers only a visitor of the page. It has all comments and their scores.
+            let data = format!("{page}.json?raw_json=1&limit=500");
+            let listing = transport::get_with(&data, &[], Some(&page)).await.ok();
+            let listing = listing.and_then(|body| serde_json::from_slice(&body.bytes).ok());
+            if let Some(page) = listing.as_ref().and_then(reddit_page) {
+                return Some(page);
+            }
+            // The feed has less, and Reddit gives a new visitor one feed request in a while.
+            let body = transport::get(&format!("{page}.rss"), |_| true)
+                .await
+                .ok()?;
             feed_page(&body.text())
+        }
+        Route::Imdb(id) => {
+            let query = format!(
+                "query {{ title(id: \"{id}\") {{ titleText {{ text }} titleType {{ text }} \
+                 releaseYear {{ year }} runtime {{ seconds }} certificate {{ rating }} \
+                 ratingsSummary {{ aggregateRating voteCount }} metacritic {{ metascore {{ score }} }} \
+                 genres {{ genres {{ text }} }} plots(first: 3) {{ edges {{ node {{ plotText {{ plainText }} }} }} }} \
+                 credits(first: 15) {{ edges {{ node {{ category {{ text }} name {{ nameText {{ text }} }} \
+                 ... on Cast {{ characters {{ name }} }} }} }} }} }} }}"
+            );
+            let api = "https://caching.graphql.imdb.com/";
+            let api = Url::parse_with_params(api, [("query", query)]).ok()?;
+            // The API reads a plus sign as a plus sign, not as a space.
+            let api = api.as_str().replace('+', "%20");
+            let headers = [
+                ("accept", "application/json"),
+                ("content-type", "application/json"),
+                ("x-imdb-client-name", "imdb-web-next-localized"),
+            ];
+            let body = transport::get_with(&api, &headers, None).await.ok()?;
+            imdb_page(&serde_json::from_slice(&body.bytes).ok()?)
+        }
+        Route::Feed(feed) => {
+            let body = transport::get(feed, |_| true).await.ok()?;
+            let page = feed_page(&body.text())?;
+            Some(Page {
+                source: Some(feed.to_owned()),
+                ..page
+            })
         }
         Route::Reuters(data) => reuters_page(&json(&data).await?),
     }
@@ -171,6 +226,7 @@ fn reuters_page(blocks: &Value) -> Option<Page> {
     Some(Page {
         title: plain(article["title"].as_str()?),
         content: content.join("\n\n").trim_end().to_owned(),
+        source: None,
     })
 }
 
@@ -224,6 +280,7 @@ fn quora_page(html: &str) -> Option<Page> {
             sections.len(),
             sections.join("\n\n")
         ),
+        source: None,
     })
 }
 
@@ -295,6 +352,7 @@ fn question_page(question: &Value, answers: &Value) -> Option<Page> {
             .text()
             .to_string(),
         content,
+        source: None,
     })
 }
 
@@ -315,25 +373,35 @@ fn tweet_page(tweet: &Value) -> Option<Page> {
     Some(Page {
         title: format!("{name} (@{handle}) on X"),
         content,
+        source: None,
     })
 }
 
-/// Renders an Atom feed as one section per entry.
+/// Renders an Atom or RSS feed as one section per entry.
 fn feed_page(xml: &str) -> Option<Page> {
-    let feed = Document::from(xml);
+    // The HTML parser drops a CDATA section, which RSS feeds put around each text.
+    let feed = Document::from(xml.replace("<![CDATA[", "").replace("]]>", ""));
     let sections: Vec<String> = feed
-        .select("entry")
+        .select("entry, item")
         .iter()
         .map(|entry| {
             let field = |selector: &str| entry.select(selector).text().trim().to_owned();
-            let link = entry.select("link").attr("href").unwrap_or_default();
+            let link = entry.select("link");
+            // Atom has the address in an attribute. RSS has it as text, which the HTML parser
+            // puts after the element.
+            let after = || link.nodes().first()?.next_sibling().map(|text| text.text());
+            let link = link.attr("href").or_else(after).unwrap_or_default();
+            let by = [field("author name"), field("updated, pubdate")];
+            let by = by.iter().filter(|part| !part.is_empty());
             format!(
-                "## {}\n\n{link}\n{}, {}\n\n{}",
+                "## {}\n\n{}\n{}\n\n{}",
                 field("title"),
-                field("author name"),
-                field("updated"),
-                markdown(&field("content"))
+                link.trim(),
+                by.map(String::as_str).collect::<Vec<_>>().join(", "),
+                markdown(&field("content, description"))
             )
+            .trim_end()
+            .to_owned()
         })
         .collect();
     // The feed's own title comes before the entries.
@@ -342,7 +410,150 @@ fn feed_page(xml: &str) -> Option<Page> {
     (!sections.is_empty()).then(|| Page {
         title,
         content: sections.join("\n\n"),
+        source: None,
     })
+}
+
+fn children(listing: &Value) -> impl Iterator<Item = &Value> {
+    let children = listing["data"]["children"].as_array();
+    children.into_iter().flatten().map(|child| &child["data"])
+}
+
+/// A Reddit thread or listing from its data.
+fn reddit_page(data: &Value) -> Option<Page> {
+    let about = |post: &Value| {
+        let time = post["created_utc"].as_f64().unwrap_or_default() as i64;
+        let day = time::OffsetDateTime::from_unix_timestamp(time).map(|time| time.date());
+        format!(
+            "r/{}, u/{}, {}, score {}, {} comments",
+            text(&post["subreddit"]),
+            text(&post["author"]),
+            day.map(|day| day.to_string()).unwrap_or_default(),
+            post["score"],
+            post["num_comments"]
+        )
+    };
+    let (title, parts) = if let Some([post, comments]) = data.as_array().map(Vec::as_slice) {
+        let post = children(post).next()?;
+        let link = (post["is_self"] != true).then(|| format!("Link: {}", text(&post["url"])));
+        let mut parts = vec![
+            about(post),
+            link.unwrap_or_default(),
+            text(&post["selftext"]),
+        ];
+        replies(comments, 0, &mut parts);
+        (text(&post["title"]), parts)
+    } else {
+        let posts = children(data).filter(|post| post["title"].is_string());
+        let parts = posts.map(|post| {
+            format!(
+                "## {}\n\nhttps://www.reddit.com{}\n{}\n\n{}",
+                text(&post["title"]),
+                text(&post["permalink"]),
+                about(post),
+                text(&post["selftext"])
+            )
+        });
+        let community = text(&children(data).next()?["subreddit"]);
+        (format!("r/{community}"), parts.collect())
+    };
+    let parts = parts.iter().map(|part| part.trim_end());
+    Some(Page {
+        title,
+        content: parts
+            .filter(|part| !part.is_empty())
+            .collect::<Vec<_>>()
+            .join("\n\n"),
+        source: None,
+    })
+}
+
+/// Adds the comments of `listing`. A reply is one heading level under the comment it answers.
+fn replies(listing: &Value, depth: usize, parts: &mut Vec<String>) {
+    for comment in children(listing) {
+        // Reddit sends the first comments and the number of the others.
+        if let Some(more) = comment["count"].as_u64().filter(|more| *more > 0) {
+            parts.push(format!("({more} more comments are not shown.)"));
+        }
+        if !comment["body"].is_string() {
+            continue;
+        }
+        let marks = "#".repeat((depth + 2).min(6));
+        let (author, body) = (text(&comment["author"]), text(&comment["body"]));
+        parts.push(format!(
+            "{marks} u/{author}, score {}\n\n{body}",
+            comment["score"]
+        ));
+        replies(&comment["replies"], depth + 1, parts);
+    }
+}
+
+/// A title on IMDb from the answer of its data API.
+fn imdb_page(data: &Value) -> Option<Page> {
+    let title = &data["data"]["title"];
+    let name = title["titleText"]["text"].as_str()?;
+    let year = &title["releaseYear"]["year"];
+    let list = |items: &Value| items.as_array().cloned().unwrap_or_default();
+    let genres = list(&title["genres"]["genres"]);
+    let genres: Vec<String> = genres.iter().map(|genre| text(&genre["text"])).collect();
+    let plots = list(&title["plots"]["edges"]);
+    let plots = plots
+        .iter()
+        .map(|plot| text(&plot["node"]["plotText"]["plainText"]));
+    let credits = list(&title["credits"]["edges"]);
+    let credits = credits.iter().map(|credit| {
+        let credit = &credit["node"];
+        let roles = list(&credit["characters"]);
+        let roles: Vec<String> = roles.iter().map(|role| text(&role["name"])).collect();
+        let role = if roles.is_empty() {
+            String::new()
+        } else {
+            format!(" ({})", roles.join(", "))
+        };
+        format!(
+            "- {}: {}{role}",
+            text(&credit["category"]["text"]),
+            text(&credit["name"]["nameText"]["text"])
+        )
+    });
+    // A title that is not out yet has no year, no rating and no length.
+    let known = |label: &str, value: &Value| {
+        let value = text(value);
+        (!value.is_empty()).then(|| label.replace("{}", &value))
+    };
+    let minutes = title["runtime"]["seconds"]
+        .as_u64()
+        .map(|seconds| Value::from(seconds / 60));
+    let facts = [
+        known("{}", &title["titleType"]["text"]),
+        known("{}", year),
+        known("{} minutes", &minutes.unwrap_or_default()),
+        known("rated {}", &title["certificate"]["rating"]),
+        known("genres: {}", &Value::from(genres.join(", "))),
+        known(
+            "IMDb rating {}",
+            &title["ratingsSummary"]["aggregateRating"],
+        ),
+        known("{} votes", &title["ratingsSummary"]["voteCount"]),
+        known("Metascore {}", &title["metacritic"]["metascore"]["score"]),
+    ];
+    let facts = facts.into_iter().flatten().collect::<Vec<_>>().join(", ");
+    let plot = plots.max_by_key(String::len).unwrap_or_default();
+    let credits = credits.collect::<Vec<_>>().join("\n");
+    let year = known(" ({})", year).unwrap_or_default();
+    Some(Page {
+        title: format!("{name}{year}"),
+        content: format!("{facts}.\n\n{plot}\n\n## Credits\n\n{credits}"),
+        source: None,
+    })
+}
+
+/// Another address of the same page, for a page whose usual address is behind a bot check.
+pub(crate) fn same_page(url: &str) -> Option<&'static str> {
+    let url = Url::parse(url).ok()?;
+    // The check of Amazon covers only the address of its home page.
+    let home = url.host_str()?.trim_start_matches("www.") == "amazon.com" && url.path() == "/";
+    home.then_some("https://www.amazon.com/ref=nav_logo")
 }
 
 #[cfg(test)]
@@ -379,9 +590,7 @@ mod tests {
             ),
             (
                 "https://www.reddit.com/r/rust/comments/abc/a_post/",
-                Some(Route::Reddit(
-                    "https://www.reddit.com/r/rust/comments/abc/a_post/.rss".into(),
-                )),
+                Some(Route::Reddit("/r/rust/comments/abc/a_post".into())),
             ),
             ("https://www.reddit.com/r/rust/.rss", None),
             ("https://www.reddit.com/r/rust/wiki/index", None),
@@ -511,5 +720,97 @@ mod tests {
         );
         assert!(parse("https://www.quora.com/x", "<html>Just a moment</html>").is_none());
         assert!(parse("https://example.org/x", &html).is_none());
+    }
+
+    #[test]
+    fn routes_imdb_titles_and_the_economist_home_page() {
+        let route = |url: &str| route(&Url::parse(url).unwrap());
+        assert_eq!(
+            route("https://www.imdb.com/title/tt0111161/"),
+            Some(Route::Imdb("tt0111161".into()))
+        );
+        assert_eq!(route("https://www.imdb.com/title/tt01x/"), None);
+        assert_eq!(
+            route("https://www.economist.com/"),
+            Some(Route::Feed("https://www.economist.com/latest/rss.xml"))
+        );
+        assert_eq!(
+            route("https://www.economist.com/leaders/2026/10/11/a-title"),
+            None
+        );
+        assert_eq!(
+            same_page("https://www.amazon.com/"),
+            Some("https://www.amazon.com/ref=nav_logo")
+        );
+        assert_eq!(same_page("https://www.amazon.com/dp/B000"), None);
+        assert_eq!(same_page("https://example.org/"), None);
+    }
+
+    #[test]
+    fn renders_a_reddit_thread_and_a_listing_from_their_data() {
+        let post = json!({"subreddit": "rust", "author": "ann", "created_utc": 1791676800.0, "score": 12,
+            "num_comments": 2, "is_self": true, "title": "Why is it slow?", "selftext": "My loop is slow.",
+            "permalink": "/r/rust/comments/1/why/", "url": "https://www.reddit.com/r/rust/comments/1/why/"});
+        let reply = json!({"kind": "Listing", "data": {"children": [
+            {"kind": "t1", "data": {"author": "cy", "score": 3, "body": "Thanks.", "replies": ""}}]}});
+        let comments = json!({"kind": "Listing", "data": {"children": [
+            {"kind": "t1", "data": {"author": "bo", "score": 7, "body": "Build with --release.", "replies": reply}},
+            {"kind": "more", "data": {"count": 4}}]}});
+        let listing =
+            json!({"kind": "Listing", "data": {"children": [{"kind": "t3", "data": post}]}});
+        let page = reddit_page(&json!([listing, comments])).unwrap();
+        assert_eq!(page.title, "Why is it slow?");
+        assert_eq!(
+            page.content,
+            "r/rust, u/ann, 2026-10-11, score 12, 2 comments\n\nMy loop is slow.\n\n\
+             ## u/bo, score 7\n\nBuild with --release.\n\n### u/cy, score 3\n\nThanks.\n\n\
+             (4 more comments are not shown.)"
+        );
+        let page = reddit_page(&listing).unwrap();
+        assert_eq!(page.title, "r/rust");
+        assert_eq!(
+            page.content,
+            "## Why is it slow?\n\nhttps://www.reddit.com/r/rust/comments/1/why/\n\
+             r/rust, u/ann, 2026-10-11, score 12, 2 comments\n\nMy loop is slow."
+        );
+        assert!(reddit_page(&json!({"error": 403})).is_none());
+    }
+
+    #[test]
+    fn renders_an_imdb_title_and_an_rss_feed() {
+        let data = json!({"data": {"title": {"titleText": {"text": "The Film"}, "titleType": {"text": "Movie"},
+            "releaseYear": {"year": 1994}, "runtime": {"seconds": 8520}, "certificate": {"rating": "R"},
+            "ratingsSummary": {"aggregateRating": 9.3, "voteCount": 3251463},
+            "metacritic": {"metascore": {"score": 82}}, "genres": {"genres": [{"text": "Drama"}]},
+            "plots": {"edges": [{"node": {"plotText": {"plainText": "Short."}}},
+                {"node": {"plotText": {"plainText": "A banker goes to prison."}}}]},
+            "credits": {"edges": [
+                {"node": {"category": {"text": "Director"}, "name": {"nameText": {"text": "F. D."}}}},
+                {"node": {"category": {"text": "Actor"}, "name": {"nameText": {"text": "T. R."}},
+                    "characters": [{"name": "Andy"}]}}]}}}});
+        let page = imdb_page(&data).unwrap();
+        assert_eq!(page.title, "The Film (1994)");
+        assert_eq!(
+            page.content,
+            "Movie, 1994, 142 minutes, rated R, genres: Drama, IMDb rating 9.3, 3251463 votes, \
+             Metascore 82.\n\nA banker goes to prison.\n\n\
+             ## Credits\n\n- Director: F. D.\n- Actor: T. R. (Andy)"
+        );
+        let unreleased = json!({"data": {"title": {"titleText": {"text": "Next"}, "titleType": {"text": "Movie"}}}});
+        let page = imdb_page(&unreleased).unwrap();
+        assert_eq!(page.title, "Next");
+        assert!(page.content.starts_with("Movie.\n\n"));
+        assert!(imdb_page(&json!({"data": {"title": null}})).is_none());
+
+        let feed = "<?xml version=\"1.0\"?><rss version=\"2.0\"><channel><title><![CDATA[Latest]]></title>\
+            <item><title><![CDATA[Oil & gas]]></title><description><![CDATA[Prices <b>rise</b>]]></description>\
+            <link>https://example.org/oil</link><guid>1</guid><pubDate>Sun, 11 Oct 2026 16:33:11 +0000</pubDate></item>\
+            </channel></rss>";
+        let page = feed_page(feed).unwrap();
+        assert_eq!(page.title, "Latest");
+        assert_eq!(
+            page.content,
+            "## Oil & gas\n\nhttps://example.org/oil\nSun, 11 Oct 2026 16:33:11 +0000\n\nPrices rise"
+        );
     }
 }
