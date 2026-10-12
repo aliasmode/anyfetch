@@ -8,13 +8,13 @@ Agent harnesses fetch pages with a bot identity, and a large part of the web ans
 
 | 97 popular sites that block AI agents | Pages read |
 | --- | --- |
-| **Anyfetch** | **73** |
-| **Anyfetch with a [NobleProxy](https://nobleproxy.com/?utm_source=anyfetch&utm_medium=readme&utm_campaign=anyfetch) residential IP** | **78** |
+| **Anyfetch** | **82** |
+| **Anyfetch with a [NobleProxy](https://nobleproxy.com/?utm_source=anyfetch&utm_medium=readme&utm_campaign=anyfetch) residential IP** | **87** |
 | curl | 46 |
 | Reference MCP fetch server | 39 |
 | Claude Code built-in `WebFetch` | 36 |
 
-Anyfetch read 21 sites that no other tool in the table could read. Among them: The New York Times, Reuters, The Washington Post, AP News, Medium, Reddit, Stack Overflow and YouTube.
+Anyfetch read 28 sites that no other tool in the table could read. Among them: The New York Times, Reuters, Bloomberg, The Washington Post, The Economist, Medium, Reddit, Stack Overflow, IMDb and YouTube.
 
 | 33 research questions, each asked twice | Answered correctly both times |
 | --- | --- |
@@ -28,7 +28,7 @@ Thirteen of the questions are about a page on a site that blocks AI agents. The 
 | **Anyfetch** | **0.19 s** | **17 MB** |
 | Headless Chromium | 1.15 s | 544 MB |
 
-Sites and questions: measured on 2026-10-12 with version 0.7.1. Time and memory: measured on 2026-10-11. All from a cloud server, with no proxy except in the proxy row. See [how we measured](#benchmark) and how to run it again.
+Sites: measured on 2026-10-12 with version 0.8.0. Questions: measured on 2026-10-12 with version 0.7.1. Time and memory: measured on 2026-10-11. All from a cloud server, with no proxy except in the proxy row. See [how we measured](#benchmark) and how to run it again.
 
 ## What your agent gets
 
@@ -326,7 +326,7 @@ Anyfetch then sends every search and fetch through that HTTP proxy. The file hol
 
 Some sites accept your own address and refuse the proxy's address. To reach both kinds, add a second line with the word `direct`. Anyfetch then tries the proxy first, and asks the site directly when the proxy route is refused.
 
-Need a proxy? Use [NobleProxy](https://nobleproxy.com/?utm_source=anyfetch&utm_medium=readme&utm_campaign=anyfetch), our own service. In our test, one NobleProxy address took Anyfetch from 73 to 78 of the 97 sites, with the same result in every run. It opened The Wall Street Journal, Glassdoor, Tripadvisor, Yelp and Etsy, which refuse a server address. You get a static residential IP that only you use, with unlimited bandwidth and HTTP support.
+Need a proxy? Use [NobleProxy](https://nobleproxy.com/?utm_source=anyfetch&utm_medium=readme&utm_campaign=anyfetch), our own service. In our test, one NobleProxy address took Anyfetch from 82 to 87 of the 97 sites, with the same result in every run. It opened The Wall Street Journal, Tripadvisor, Yelp, Etsy and Bandcamp, which refuse a server address. You get a static residential IP that only you use, with unlimited bandwidth and HTTP support.
 
 ## What it does not do
 
@@ -338,7 +338,7 @@ Does your agent need a real browser, with logins and saved sessions? Use [AliasM
 
 The numbers at the top come from two scripts and one question set in [`bench/`](bench).
 
-- **Pages read.** `bench/bench.py` reads each of the 97 sites in [`bench/sites.txt`](bench/sites.txt) once with each tool. A page counts as read when the tool returns at least 500 characters of text and the text is not a bot check. The same rule is applied to every tool. Anyfetch ran three times and read 74, 72 and 73 pages; the table shows the middle run. Through a [NobleProxy](https://nobleproxy.com/?utm_source=anyfetch&utm_medium=readme&utm_campaign=anyfetch) static residential IP, a fixed address of a US cable provider, it read 78 pages in each of three runs. The proxy added The Wall Street Journal, Glassdoor, Tripadvisor, Yelp, Etsy, Bandcamp and UNESCO. The other tools were not tested through the proxy. Claude Code's `WebFetch` cannot be scripted, so an agent called it once per site and recorded if real content came back.
+- **Pages read.** `bench/bench.py` reads each of the 97 sites in [`bench/sites.txt`](bench/sites.txt) once with each tool. A page counts as read when the tool returns at least 500 characters of text and the text is not a bot check. The same rule is applied to every tool. Anyfetch ran three times and read 82, 81 and 82 pages; the table shows the middle run. Through a [NobleProxy](https://nobleproxy.com/?utm_source=anyfetch&utm_medium=readme&utm_campaign=anyfetch) static residential IP, a fixed address of a US cable provider, with the `direct` line in the proxy file, it read 87 pages in each of three runs. The proxy added The Wall Street Journal, Tripadvisor, Yelp, Etsy and Bandcamp. The other tools were not tested through the proxy. Claude Code's `WebFetch` cannot be scripted, so an agent called it once per site and recorded if real content came back.
 - **Time and memory.** `bench/speed.py` reads 10 pages with each program, started fresh for every page, and reports the median.
 
 - **Research questions.** [`bench/tasks.json`](bench/tasks.json) has 33 questions. Each has one exact answer and the sentence on the source page that proves it. The pages are from July to October 2026, so a model cannot answer from memory. A Claude Sonnet agent answered the questions with Anyfetch only, and again with the built-in `WebSearch` and `WebFetch` of Claude Code only. The instructions were the same: at most 8 web calls for each question, and the answer `UNKNOWN` when the tools do not give it. Anyfetch ran with no proxy, no Firefox and no Lightpanda. Each tool ran twice, and a question counts when both runs are correct.
