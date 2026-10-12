@@ -9,6 +9,7 @@ Agent harnesses fetch pages with a bot identity, and a large part of the web ans
 | 97 popular sites that block AI agents | Pages read |
 | --- | --- |
 | **Anyfetch** | **73** |
+| **Anyfetch through a residential proxy** | **78** |
 | curl | 46 |
 | Reference MCP fetch server | 39 |
 | Claude Code built-in `WebFetch` | 36 |
@@ -27,7 +28,7 @@ Thirteen of the questions are about a page on a site that blocks AI agents. The 
 | **Anyfetch** | **0.19 s** | **17 MB** |
 | Headless Chromium | 1.15 s | 544 MB |
 
-Sites and questions: measured on 2026-10-12 with version 0.7.1. Time and memory: measured on 2026-10-11. All from a cloud server, with no proxy. See [how we measured](#benchmark) and how to run it again.
+Sites and questions: measured on 2026-10-12 with version 0.7.1. Time and memory: measured on 2026-10-11. All from a cloud server, with no proxy except in the proxy row. See [how we measured](#benchmark) and how to run it again.
 
 ## What your agent gets
 
@@ -334,7 +335,7 @@ Does your agent need a real browser, with logins and saved sessions? Use [AliasM
 
 The numbers at the top come from two scripts and one question set in [`bench/`](bench).
 
-- **Pages read.** `bench/bench.py` reads each of the 97 sites in [`bench/sites.txt`](bench/sites.txt) once with each tool. A page counts as read when the tool returns at least 500 characters of text and the text is not a bot check. The same rule is applied to every tool. Anyfetch ran three times and read 74, 72 and 73 pages; the table shows the middle run. Claude Code's `WebFetch` cannot be scripted, so an agent called it once per site and recorded if real content came back.
+- **Pages read.** `bench/bench.py` reads each of the 97 sites in [`bench/sites.txt`](bench/sites.txt) once with each tool. A page counts as read when the tool returns at least 500 characters of text and the text is not a bot check. The same rule is applied to every tool. Anyfetch ran three times and read 74, 72 and 73 pages; the table shows the middle run. Through a residential proxy, one fixed address of a US cable provider, it read 78 pages in each of three runs. The proxy added The Wall Street Journal, Glassdoor, Tripadvisor, Yelp, Etsy, Bandcamp and UNESCO. The other tools were not tested through the proxy. Claude Code's `WebFetch` cannot be scripted, so an agent called it once per site and recorded if real content came back.
 - **Time and memory.** `bench/speed.py` reads 10 pages with each program, started fresh for every page, and reports the median.
 
 - **Research questions.** [`bench/tasks.json`](bench/tasks.json) has 33 questions. Each has one exact answer and the sentence on the source page that proves it. The pages are from July to October 2026, so a model cannot answer from memory. A Claude Sonnet agent answered the questions with Anyfetch only, and again with the built-in `WebSearch` and `WebFetch` of Claude Code only. The instructions were the same: at most 8 web calls for each question, and the answer `UNKNOWN` when the tools do not give it. Anyfetch ran with no proxy, no Firefox and no Lightpanda. Each tool ran twice, and a question counts when both runs are correct.
