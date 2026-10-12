@@ -27,9 +27,29 @@ pub(crate) fn doubled(html: &str) -> Option<String> {
         .then(|| format!("solution={text}{text}&js_challenge=1&jsc_token={token}&jsc_orig_r="))
 }
 
+/// A page that only tells the visitor that a script checks the browser. Sites send these two
+/// with a normal status, so the status does not show that the page is missing.
+pub(crate) fn waiting_page(html: &str) -> bool {
+    let title = html
+        .split_once("<title>")
+        .and_then(|(_, rest)| rest.split_once("</title>"));
+    let title = title.map_or("", |(title, _)| title.trim());
+    matches!(title, "Pardon Our Interruption..." | "Client Challenge")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn knows_a_waiting_page_by_its_title() {
+        assert!(waiting_page(
+            "<html><head><title>Pardon Our Interruption...</title></head></html>"
+        ));
+        assert!(waiting_page("<head>\n<title> Client Challenge </title>"));
+        assert!(!waiting_page("<title>A client challenge in court</title>"));
+        assert!(!waiting_page("<html><body>No title</body></html>"));
+    }
 
     #[test]
     fn finds_the_cookie_of_a_reload_check_in_its_known_form_only() {

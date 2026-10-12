@@ -37,9 +37,10 @@ Sites and questions: measured on 2026-10-12 with version 0.7.1. Time and memory:
 - **Answers, not whole pages.** Give a question with the URL, and get only the parts of the page that match it. The Python 3.15 release notes are 218,000 characters; the answer to one question about them came back in 2,200.
 - **Clean Markdown.** Links, tables and code blocks stay intact. Long pages come in parts.
 - **PDFs.** Papers and reports come back as text, page by page.
-- **Sites that need JavaScript.** Anyfetch reads the data inside the page, and uses the site's public API or feed for Stack Overflow, Reddit, X posts, PyPI and crates.io. No browser runs. For pages that hold nothing without their scripts, it can use Lightpanda, an optional small engine.
-- **News and answers.** Full articles on Reuters and Bloomberg, and the answers on Quora, from the data that these sites send with the page.
-- **Browser-grade requests.** Safari's TLS, HTTP/2 and header fingerprint. A refused fetch is retried automatically, as the same browser or as a second one.
+- **Sites that need JavaScript.** Anyfetch reads the data inside the page, and uses the site's public API or feed for Stack Overflow, Reddit, IMDb, X posts, PyPI and crates.io. A Reddit thread comes with every comment and its score. No browser runs. For pages that hold nothing without their scripts, it can use Lightpanda, an optional small engine.
+- **News and answers.** Full articles on Reuters and Bloomberg, the latest articles of The Economist, and the answers on Quora, from the data that these sites send.
+- **Home pages and listings.** A page with no single article comes back as its headlines and links, in page order.
+- **Browser-grade requests.** Safari's TLS, HTTP/2 and header fingerprint. A refused fetch is retried automatically, as the same browser or as a second one. Bot checks that are one fixed step, as on Reddit and Behance, are passed.
 - **Cloudflare checks.** When a site insists on a JavaScript check, your own Firefox passes it once. After that, Anyfetch reads the site with plain requests.
 - **Fast on repeat.** Several pages in one call, fetched at the same time. A page fetched in the last 15 minutes comes from a local copy.
 - **Lightweight.** A 16 MB Rust binary. No bundled browser, no JavaScript engine, no Python, no Node.

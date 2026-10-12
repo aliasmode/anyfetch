@@ -373,6 +373,15 @@ async fn read(
             }
             return Ok((body, Some(check)));
         }
+        if challenge::waiting_page(&page) {
+            return Err(ToolError {
+                status: Some(status),
+                ..ToolError::new(
+                    "challenge_required",
+                    "The site answered with a bot check page",
+                )
+            });
+        }
     }
     if let Some(error) = error {
         return Err(error);
