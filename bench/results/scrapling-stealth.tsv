@@ -1,0 +1,97 @@
+https://www.nytimes.com/	not read	http 403 (only 1 chars by judge)	1.78
+https://www.bbc.com/news	read	24303 chars	3.25
+https://www.bloomberg.com/	read	66495 chars	17.73
+https://www.usatoday.com/	read	14428 chars	97.21
+https://www.cnn.com/	read	87568 chars	10.44
+https://www.washingtonpost.com/	read	68840 chars	8.26
+https://www.theguardian.com/international	read	59270 chars	3.57
+https://www.theatlantic.com/	read	33431 chars	3.68
+https://apnews.com/	read	176039 chars	16.06
+https://www.nbcnews.com/	read	99397 chars	8.27
+https://www.cnbc.com/	read	44835 chars	5.69
+https://www.npr.org/	read	161768 chars	4.83
+https://www.ft.com/	not read	http 403 (bot check by judge)	1.67
+https://www.forbes.com/	read	66298 chars	3.87
+https://www.businessinsider.com/	read	25432 chars	2.18
+https://www.latimes.com/	read	242325 chars	3.43
+https://www.newsweek.com/	read	67090 chars	5.59
+https://www.vox.com/	read	53034 chars	6.40
+https://people.com/	read	66954 chars	3.38
+https://www.lemonde.fr/	read	29498 chars	2.69
+https://www.lefigaro.fr/	read	157741 chars	4.27
+https://www.dailymail.co.uk/home/index.html	not read	only 1 chars	2.20
+https://www.telegraph.co.uk/	not read	http 402 (928 chars by judge)	1.86
+https://news.sky.com/	not read	only 1 chars	1.68
+https://nypost.com/	read	140608 chars	7.09
+https://www.wsj.com/	not read	http 401 (only 1 chars by judge)	2.04
+https://abcnews.go.com/	read	43226 chars	4.42
+https://www.buzzfeed.com/	read	85072 chars	6.80
+https://www.huffpost.com/	read	46784 chars	4.70
+https://thehill.com/	read	61783 chars	2.60
+https://www.reuters.com/	not read	http 401 (only 1 chars by judge)	1.61
+https://www.economist.com/	not read	http 403 (only 1 chars by judge)	1.52
+https://www.wired.com/	read	28275 chars	5.42
+https://arstechnica.com/	read	43959 chars	3.07
+https://www.theverge.com/	read	60823 chars	5.99
+https://techcrunch.com/	read	41786 chars	3.63
+https://www.cnet.com/	read	50051 chars	2.30
+https://www.zdnet.com/	read	27209 chars	2.74
+https://mashable.com/	read	30387 chars	2.55
+https://www.instagram.com/instagram/	read	5675 chars	3.44
+https://x.com/elonmusk	read	7134 chars	4.23
+https://www.tiktok.com/@tiktok	read	989 chars	8.12
+https://www.pinterest.com/pinterest/	read	590 chars	3.75
+https://www.linkedin.com/company/anthropicresearch/	read	1005 chars	2.77
+https://www.tumblr.com/explore/trending	not read	only 420 chars	3.21
+https://medium.com/tag/technology	read	29461 chars	5.76
+https://www.quora.com/What-is-web-scraping	read	12186 chars	3.35
+https://www.reddit.com/r/technology/	read	49735 chars	5.06
+https://vimeo.com/watch	read	16515 chars	7.54
+https://www.flickr.com/explore	read	15917 chars	4.51
+https://unsplash.com/	not read	http 401 (bot check by judge)	1.61
+https://www.pexels.com/	read	24580 chars	3.79
+https://www.behance.net/	read	25655 chars	4.86
+https://bandcamp.com/	not read	only 210 chars	1.91
+https://www.patreon.com/	read	16150 chars	2.97
+https://www.slideshare.net/	read	10943 chars	2.81
+https://starwars.fandom.com/wiki/Luke_Skywalker	read	1147175 chars	19.15
+https://www.ted.com/talks	read	14025 chars	4.78
+https://www.figma.com/	read	10035 chars	3.06
+https://www.rollingstone.com/	read	33833 chars	3.56
+https://www.yahoo.com/	read	29459 chars	6.15
+https://www.msn.com/	not read	only 1 chars	5.31
+https://weather.com/	read	7073 chars	3.79
+https://www.healthline.com/	read	18115 chars	3.20
+https://www.webmd.com/	read	42479 chars	6.42
+https://www.investopedia.com/	read	32354 chars	5.59
+https://www.yelp.com/	not read	http 403 (only 1 chars by judge)	2.46
+https://www.amazon.com/	read	27388 chars	3.41
+https://www.ebay.com/	not read	http 403 (only 231 chars by judge)	2.01
+https://www.congress.gov/	not read	http 403 (bot check by judge)	1.76
+https://www.unesco.org/en	read	16989 chars	3.87
+https://www.alibaba.com/	read	46657 chars	7.61
+https://www.espn.com/	read	76645 chars	4.00
+https://www.cbsnews.com/	read	27971 chars	3.41
+https://www.wattpad.com/	read	19606 chars	2.69
+https://stackoverflow.com/questions/11227809/why-is-processing-a-sorted-array-faster-than-processing-an-unsorted-array	not read	http 403 (only 1 chars by judge)	1.54
+https://www.glassdoor.com/	not read	http 403 (938 chars by judge)	2.08
+https://www.indeed.com/	not read	http 403 (8266 chars by judge)	1.95
+https://www.zillow.com/	read	24214 chars	5.02
+https://www.tripadvisor.com/	not read	http 403 (only 1 chars by judge)	2.31
+https://www.booking.com/	not read	only 1 chars	2.09
+https://www.imdb.com/title/tt0111161/	not read	only 1 chars	1.61
+https://www.g2.com/	not read	http 403 (only 1 chars by judge)	2.07
+https://www.crunchbase.com/organization/anthropic	not read	http 403 (908 chars by judge)	1.75
+https://www.researchgate.net/	not read	http 403 (only 1 chars by judge)	2.11
+https://www.sciencedirect.com/	read	13372 chars	4.03
+https://www.nature.com/	read	22743 chars	4.00
+https://www.youtube.com/watch?v=dQw4w9WgXcQ	not read	only 36 chars	6.83
+https://scholar.google.com/scholar?q=transformer+attention	read	16342 chars	2.19
+https://openai.com/	read	9714 chars	3.08
+https://www.etsy.com/	not read	http 403 (only 1 chars by judge)	2.26
+https://www.walmart.com/	read	943 chars	5.31
+https://www.bestbuy.com/	read	2499 chars	2.68
+https://www.target.com/	read	62437 chars	7.77
+https://github.com/rust-lang/rust	read	17078 chars	3.40
+https://en.wikipedia.org/wiki/Web_scraping	read	63267 chars	2.42
+https://news.ycombinator.com/	read	10295 chars	2.69

@@ -1,0 +1,97 @@
+https://www.nytimes.com/	not read	http 403 (986 chars by judge)	2.44
+https://www.bbc.com/news	read	47756 chars	5.31
+https://www.bloomberg.com/	not read	http 403 (bot check by judge)	3.72
+https://www.usatoday.com/	read	46010 chars	15.95
+https://www.cnn.com/	not read	only 109 chars	2.19
+https://www.washingtonpost.com/	not read	navigate error: ### Error Error: browserBackend.callTool: net::ERR_HTTP2_PROTOCOL_ERROR at https://www.washingtonpost.com/ Call log: [2m  - navigating to "https://ww	2.13
+https://www.theguardian.com/international	read	143270 chars	4.31
+https://www.theatlantic.com/	not read	http 403 (1521 chars by judge)	2.28
+https://apnews.com/	not read	http 403 (bot check by judge)	2.61
+https://www.nbcnews.com/	read	127581 chars	9.89
+https://www.cnbc.com/	read	92012 chars	6.39
+https://www.npr.org/	read	102417 chars	20.59
+https://www.ft.com/	not read	http 403 (bot check by judge)	2.22
+https://www.forbes.com/	read	129898 chars	4.50
+https://www.businessinsider.com/	read	48256 chars	4.15
+https://www.latimes.com/	not read	http 403 (only 187 chars by judge)	2.08
+https://www.newsweek.com/	read	93502 chars	7.59
+https://www.vox.com/	read	54046 chars	8.42
+https://people.com/	not read	http 402 (910 chars by judge)	2.00
+https://www.lemonde.fr/	read	35984 chars	3.02
+https://www.lefigaro.fr/	read	237482 chars	6.03
+https://www.dailymail.co.uk/home/index.html	not read	http 403 (bot check by judge)	2.15
+https://www.telegraph.co.uk/	not read	http 403 (bot check by judge)	2.15
+https://news.sky.com/	not read	http 403 (bot check by judge)	2.07
+https://nypost.com/	read	193827 chars	8.89
+https://www.wsj.com/	not read	http 401 (only 332 chars by judge)	2.88
+https://abcnews.go.com/	read	93942 chars	5.85
+https://www.buzzfeed.com/	read	116264 chars	10.41
+https://www.huffpost.com/	read	71174 chars	39.64
+https://thehill.com/	not read	http 403 (bot check by judge)	4.38
+https://www.reuters.com/	not read	http 401 (only 339 chars by judge)	2.48
+https://www.economist.com/	not read	http 403 (bot check by judge)	2.22
+https://www.wired.com/	read	53563 chars	10.90
+https://arstechnica.com/	read	54562 chars	7.71
+https://www.theverge.com/	read	121882 chars	16.70
+https://techcrunch.com/	read	94848 chars	7.25
+https://www.cnet.com/	read	101650 chars	5.64
+https://www.zdnet.com/	read	65976 chars	4.13
+https://mashable.com/	read	57657 chars	3.44
+https://www.instagram.com/instagram/	read	11929 chars	3.28
+https://x.com/elonmusk	not read	navigate error: ### Error Error: browserBackend.callTool: net::ERR_HTTP_RESPONSE_CODE_FAILURE at https://x.com/elonmusk Call log: [2m  - navigating to "https://x.com	1.93
+https://www.tiktok.com/@tiktok	read	28887 chars	7.85
+https://www.pinterest.com/pinterest/	read	7005 chars	3.23
+https://www.linkedin.com/company/anthropicresearch/	read	65513 chars	3.76
+https://www.tumblr.com/explore/trending	read	79488 chars	6.89
+https://medium.com/tag/technology	not read	http 403 (bot check by judge)	2.19
+https://www.quora.com/What-is-web-scraping	not read	http 403 (bot check by judge)	2.38
+https://www.reddit.com/r/technology/	not read	bot check	2.91
+https://vimeo.com/watch	read	36606 chars	8.85
+https://www.flickr.com/explore	read	44896 chars	4.47
+https://unsplash.com/	not read	http 403 (bot check by judge)	2.19
+https://www.pexels.com/	not read	http 403 (bot check by judge)	2.35
+https://www.behance.net/	not read	http 400 (only 431 chars by judge)	2.09
+https://bandcamp.com/	not read	bot check	2.11
+https://www.patreon.com/	read	15700 chars	4.06
+https://www.slideshare.net/	not read	bot check	2.19
+https://starwars.fandom.com/wiki/Luke_Skywalker	not read	http 403 (bot check by judge)	2.27
+https://www.ted.com/talks	read	30006 chars	4.13
+https://www.figma.com/	read	26360 chars	2.96
+https://www.rollingstone.com/	read	55025 chars	10.61
+https://www.yahoo.com/	read	55418 chars	3.41
+https://www.msn.com/	read	65986 chars	6.16
+https://weather.com/	read	33076 chars	5.23
+https://www.healthline.com/	read	27600 chars	5.36
+https://www.webmd.com/	read	47048 chars	3.87
+https://www.investopedia.com/	not read	http 402 (920 chars by judge)	2.06
+https://www.yelp.com/	not read	http 403 (1127 chars by judge)	2.50
+https://www.amazon.com/	not read	only 70 chars	2.15
+https://www.ebay.com/	not read	http 403 (750 chars by judge)	2.13
+https://www.congress.gov/	not read	http 403 (bot check by judge)	2.24
+https://www.unesco.org/en	read	27029 chars	4.44
+https://www.alibaba.com/	read	96224 chars	7.73
+https://www.espn.com/	read	43786 chars	4.56
+https://www.cbsnews.com/	read	32654 chars	3.57
+https://www.wattpad.com/	read	7240 chars	3.22
+https://stackoverflow.com/questions/11227809/why-is-processing-a-sorted-array-faster-than-processing-an-unsorted-array	not read	http 403 (bot check by judge)	2.25
+https://www.glassdoor.com/	not read	http 403 (bot check by judge)	3.32
+https://www.indeed.com/	not read	http 403 (2207 chars by judge)	2.35
+https://www.zillow.com/	not read	http 403 (bot check by judge)	3.19
+https://www.tripadvisor.com/	not read	http 403 (1027 chars by judge)	2.64
+https://www.booking.com/	not read	only 71 chars	2.37
+https://www.imdb.com/title/tt0111161/	not read	http 403 (bot check by judge)	2.08
+https://www.g2.com/	not read	http 403 (1039 chars by judge)	2.51
+https://www.crunchbase.com/organization/anthropic	not read	http 403 (bot check by judge)	2.17
+https://www.researchgate.net/	not read	http 403 (1170 chars by judge)	2.18
+https://www.sciencedirect.com/	not read	http 403 (3744 chars by judge)	2.35
+https://www.nature.com/	read	39772 chars	5.48
+https://www.youtube.com/watch?v=dQw4w9WgXcQ	read	1346 chars	5.14
+https://scholar.google.com/scholar?q=transformer+attention	not read	http 429 (bot check by judge)	2.24
+https://openai.com/	not read	http 403 (bot check by judge)	2.06
+https://www.etsy.com/	not read	http 403 (1013 chars by judge)	2.20
+https://www.walmart.com/	read	35571 chars	4.18
+https://www.bestbuy.com/	read	1319 chars	27.75
+https://www.target.com/	read	24808 chars	8.52
+https://github.com/rust-lang/rust	read	34853 chars	3.87
+https://en.wikipedia.org/wiki/Web_scraping	read	123073 chars	2.71
+https://news.ycombinator.com/	read	47670 chars	2.58

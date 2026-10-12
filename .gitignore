@@ -1,2 +1,4 @@
 /target/
 /.claude/
+__pycache__/
+/bench/other-tools/raw/

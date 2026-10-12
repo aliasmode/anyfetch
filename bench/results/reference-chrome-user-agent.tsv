@@ -1,0 +1,97 @@
+https://www.nytimes.com/	not read	Failed to fetch https://www.nytimes.com/ - status code 403	1.23
+https://www.bbc.com/news	not read	only 368 chars	4.74
+https://www.bloomberg.com/	not read	Failed to fetch https://www.bloomberg.com/ - status code 403	1.20
+https://www.usatoday.com/	not read	Failed to fetch https://www.usatoday.com/ - status code 402	1.18
+https://www.cnn.com/	read	19446 chars	8.72
+https://www.washingtonpost.com/	not read	Failed to fetch https://www.washingtonpost.com/: ReadTimeout	31.17
+https://www.theguardian.com/international	read	43137 chars	5.84
+https://www.theatlantic.com/	not read	Failed to fetch https://www.theatlantic.com/ - status code 4	1.25
+https://apnews.com/	not read	Failed to fetch https://apnews.com/ - status code 403	0.09
+https://www.nbcnews.com/	read	4725 chars	4.04
+https://www.cnbc.com/	read	2211 chars	5.78
+https://www.npr.org/	read	30466 chars	6.60
+https://www.ft.com/	not read	Failed to fetch https://www.ft.com/ - status code 403	0.16
+https://www.forbes.com/	read	19599 chars	3.77
+https://www.businessinsider.com/	read	11405 chars	2.63
+https://www.latimes.com/	read	10363 chars	5.80
+https://www.newsweek.com/	read	2424 chars	2.65
+https://www.vox.com/	read	16612 chars	2.33
+https://people.com/	not read	Failed to fetch https://people.com/ - status code 403	0.11
+https://www.lemonde.fr/	read	2705 chars	1.79
+https://www.lefigaro.fr/	read	44911 chars	2.99
+https://www.dailymail.co.uk/home/index.html	read	5393 chars	5.79
+https://www.telegraph.co.uk/	not read	Failed to fetch https://www.telegraph.co.uk/ - status code 4	0.29
+https://news.sky.com/	not read	Failed to fetch https://news.sky.com/ - status code 403	0.06
+https://nypost.com/	not read	only 257 chars	7.39
+https://www.wsj.com/	not read	Failed to fetch https://www.wsj.com/ - status code 401	0.06
+https://abcnews.go.com/	not read	only 189 chars	3.14
+https://www.buzzfeed.com/	read	4294 chars	2.78
+https://www.huffpost.com/	read	751 chars	4.11
+https://thehill.com/	not read	Failed to fetch https://thehill.com/ - status code 403	0.11
+https://www.reuters.com/	not read	Failed to fetch https://www.reuters.com/ - status code 401	0.11
+https://www.economist.com/	not read	Failed to fetch https://www.economist.com/ - status code 403	0.06
+https://www.wired.com/	read	1592 chars	2.86
+https://arstechnica.com/	read	1647 chars	2.97
+https://www.theverge.com/	read	23329 chars	2.52
+https://techcrunch.com/	read	1590 chars	2.89
+https://www.cnet.com/	not read	only 374 chars	3.63
+https://www.zdnet.com/	read	18431 chars	3.50
+https://mashable.com/	read	6400 chars	2.61
+https://www.instagram.com/instagram/	not read	only 53 chars	1.91
+https://x.com/elonmusk	not read	only 239 chars	2.60
+https://www.tiktok.com/@tiktok	not read	only 53 chars	2.22
+https://www.pinterest.com/pinterest/	not read	only 43 chars	3.62
+https://www.linkedin.com/company/anthropicresearch/	read	18217 chars	2.79
+https://www.tumblr.com/explore/trending	not read	only 161 chars	2.41
+https://medium.com/tag/technology	not read	Failed to fetch https://medium.com/tag/technology - status c	0.03
+https://www.quora.com/What-is-web-scraping	not read	Failed to fetch https://www.quora.com/What-is-web-scraping -	0.06
+https://www.reddit.com/r/technology/	not read	only 53 chars	1.54
+https://vimeo.com/watch	not read	only 198 chars	2.15
+https://www.flickr.com/explore	not read	only 112 chars	3.35
+https://unsplash.com/	not read	Failed to fetch https://unsplash.com/ - status code 401	0.08
+https://www.pexels.com/	not read	Failed to fetch https://www.pexels.com/ - status code 403	0.04
+https://www.behance.net/	not read	Failed to fetch https://www.behance.net/ - status code 403	0.04
+https://bandcamp.com/	not read	only 209 chars	1.40
+https://www.patreon.com/	read	5372 chars	2.60
+https://www.slideshare.net/	not read	only 209 chars	1.23
+https://starwars.fandom.com/wiki/Luke_Skywalker	not read	Failed to fetch https://starwars.fandom.com/wiki/Luke_Skywal	0.04
+https://www.ted.com/talks	not read	only 317 chars	2.26
+https://www.figma.com/	read	17726 chars	2.35
+https://www.rollingstone.com/	read	2546 chars	2.51
+https://www.yahoo.com/	read	2263 chars	2.18
+https://www.msn.com/	not read	only 53 chars	1.41
+https://weather.com/	not read	only 311 chars	2.09
+https://www.healthline.com/	read	2716 chars	2.95
+https://www.webmd.com/	read	5942 chars	3.47
+https://www.investopedia.com/	not read	Failed to fetch https://www.investopedia.com/ - status code 	0.11
+https://www.yelp.com/	not read	Failed to fetch https://www.yelp.com/ - status code 403	0.07
+https://www.amazon.com/	not read	only 53 chars	1.20
+https://www.ebay.com/	not read	Failed to fetch https://www.ebay.com/ - status code 403	0.10
+https://www.congress.gov/	not read	Failed to fetch https://www.congress.gov/ - status code 403	0.03
+https://www.unesco.org/en	read	512 chars	2.57
+https://www.alibaba.com/	read	867 chars	2.99
+https://www.espn.com/	read	18758 chars	2.27
+https://www.cbsnews.com/	read	2701 chars	2.19
+https://www.wattpad.com/	read	646 chars	2.75
+https://stackoverflow.com/questions/11227809/why-is-processing-a-sorted-array-faster-than-processing-an-unsorted-array	not read	Failed to fetch https://stackoverflow.com/questions/11227809	0.09
+https://www.glassdoor.com/	not read	Failed to fetch https://www.glassdoor.com/ - status code 403	0.06
+https://www.indeed.com/	not read	Failed to fetch https://www.indeed.com/ - status code 403	0.05
+https://www.zillow.com/	read	2680 chars	2.35
+https://www.tripadvisor.com/	not read	Failed to fetch https://www.tripadvisor.com/ - status code 4	0.08
+https://www.booking.com/	not read	only 53 chars	1.48
+https://www.imdb.com/title/tt0111161/	not read	only 53 chars	1.52
+https://www.g2.com/	not read	Failed to fetch https://www.g2.com/ - status code 403	0.12
+https://www.crunchbase.com/organization/anthropic	not read	Failed to fetch https://www.crunchbase.com/organization/anth	0.08
+https://www.researchgate.net/	not read	Failed to fetch https://www.researchgate.net/ - status code 	0.05
+https://www.sciencedirect.com/	not read	Failed to fetch https://www.sciencedirect.com/ - status code	0.12
+https://www.nature.com/	read	4503 chars	2.82
+https://www.youtube.com/watch?v=dQw4w9WgXcQ	not read	only 53 chars	2.64
+https://scholar.google.com/scholar?q=transformer+attention	read	12270 chars	2.93
+https://openai.com/	not read	Failed to fetch https://openai.com/ - status code 403	0.05
+https://www.etsy.com/	not read	Failed to fetch https://www.etsy.com/ - status code 403	0.13
+https://www.walmart.com/	read	2560 chars	2.12
+https://www.bestbuy.com/	not read	Failed to fetch https://www.bestbuy.com/: ReadTimeout('')	30.11
+https://www.target.com/	read	8491 chars	3.63
+https://github.com/rust-lang/rust	read	2306 chars	1.88
+https://en.wikipedia.org/wiki/Web_scraping	read	45486 chars	2.37
+https://news.ycombinator.com/	read	9704 chars	1.94

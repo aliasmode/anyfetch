@@ -1,0 +1,97 @@
+https://www.nytimes.com/	not read	only 373 chars	1.05
+https://www.bbc.com/news	read	14151 chars	0.21
+https://www.bloomberg.com/	read	84573 chars	0.59
+https://www.usatoday.com/	read	7015 chars	0.33
+https://www.cnn.com/	read	3161 chars	0.19
+https://www.washingtonpost.com/	not read	only 442 chars	1.17
+https://www.theguardian.com/international	not read	Failed to fetch url	0.20
+https://www.theatlantic.com/	not read	Keyless Firecrawl extract failed: Client error '403 Forbidden' for url 'https://api.firecrawl.dev/v2/scrape' For more in	0.14
+https://apnews.com/	read	36582 chars	0.41
+https://www.nbcnews.com/	read	3251 chars	0.26
+https://www.cnbc.com/	not read	only 360 chars	0.68
+https://www.npr.org/	read	137651 chars	0.19
+https://www.ft.com/	read	39870 chars	0.30
+https://www.forbes.com/	read	38464 chars	0.32
+https://www.businessinsider.com/	read	2074 chars	0.20
+https://www.latimes.com/	read	569 chars	0.67
+https://www.newsweek.com/	read	34767 chars	0.17
+https://www.vox.com/	read	50180 chars	0.35
+https://people.com/	read	2051 chars	0.28
+https://www.lemonde.fr/	read	3350 chars	0.19
+https://www.lefigaro.fr/	not read	only 250 chars	0.61
+https://www.dailymail.co.uk/home/index.html	read	80693 chars	0.19
+https://www.telegraph.co.uk/	read	38642 chars	0.30
+https://news.sky.com/	not read	Keyless Keenable extract failed: {"error":"Bad gateway","message":"The target page could not be reached by the fetcher (	2.64
+https://nypost.com/	read	3257 chars	0.17
+https://www.wsj.com/	read	641 chars	0.71
+https://abcnews.go.com/	read	27889 chars	0.14
+https://www.buzzfeed.com/	read	49478 chars	0.37
+https://www.huffpost.com/	read	648 chars	0.32
+https://thehill.com/	read	2499 chars	0.18
+https://www.reuters.com/	not read	only 431 chars	0.50
+https://www.economist.com/	read	46715 chars	0.18
+https://www.wired.com/	read	22792 chars	0.35
+https://arstechnica.com/	read	16362 chars	0.34
+https://www.theverge.com/	read	3100 chars	0.19
+https://techcrunch.com/	read	8068 chars	0.62
+https://www.cnet.com/	read	61471 chars	0.17
+https://www.zdnet.com/	not read	Keyless Firecrawl extract failed: Client error '403 Forbidden' for url 'https://api.firecrawl.dev/v2/scrape' For more in	0.11
+https://mashable.com/	not read	only 225 chars	0.50
+https://www.instagram.com/instagram/	not read	only 243 chars	0.19
+https://x.com/elonmusk	read	702 chars	0.48
+https://www.tiktok.com/@tiktok	not read	Failed to fetch url	3.54
+https://www.pinterest.com/pinterest/	not read	Keyless Firecrawl extract failed: Client error '403 Forbidden' for url 'https://api.firecrawl.dev/v2/scrape' For more in	0.12
+https://www.linkedin.com/company/anthropicresearch/	read	12949 chars	0.67
+https://www.tumblr.com/explore/trending	read	3103 chars	0.17
+https://medium.com/tag/technology	read	668 chars	0.53
+https://www.quora.com/What-is-web-scraping	not read	Failed to fetch url	1.30
+https://www.reddit.com/r/technology/	not read	Keyless Firecrawl extract failed: Client error '403 Forbidden' for url 'https://api.firecrawl.dev/v2/scrape' For more in	0.13
+https://vimeo.com/watch	not read	only 244 chars	0.30
+https://www.flickr.com/explore	not read	only 133 chars	0.21
+https://unsplash.com/	not read	only 331 chars	0.50
+https://www.pexels.com/	not read	Failed to fetch url	0.42
+https://www.behance.net/	read	27858 chars	0.27
+https://bandcamp.com/	read	608 chars	0.28
+https://www.patreon.com/	read	1906 chars	0.23
+https://www.slideshare.net/	read	2068 chars	0.79
+https://starwars.fandom.com/wiki/Luke_Skywalker	read	199391 chars	0.30
+https://www.ted.com/talks	read	11119 chars	0.27
+https://www.figma.com/	read	2274 chars	0.30
+https://www.rollingstone.com/	read	1266 chars	0.18
+https://www.yahoo.com/	read	1091 chars	0.75
+https://www.msn.com/	not read	Failed to fetch url	1.63
+https://weather.com/	read	17050 chars	0.25
+https://www.healthline.com/	read	2309 chars	0.31
+https://www.webmd.com/	read	2071 chars	0.17
+https://www.investopedia.com/	not read	only 64 chars	0.62
+https://www.yelp.com/	not read	Failed to fetch url	0.45
+https://www.amazon.com/	read	71676 chars	0.35
+https://www.ebay.com/	not read	Keyless Keenable extract failed: {"error":"Bad gateway","message":"The target page could not be reached by the fetcher (	3.09
+https://www.congress.gov/	read	3105 chars	0.24
+https://www.unesco.org/en	read	1907 chars	0.64
+https://www.alibaba.com/	read	3472 chars	0.46
+https://www.espn.com/	read	25989 chars	0.30
+https://www.cbsnews.com/	not read	only 360 chars	0.32
+https://www.wattpad.com/	not read	only 443 chars	0.19
+https://stackoverflow.com/questions/11227809/why-is-processing-a-sorted-array-faster-than-processing-an-unsorted-array	read	1607 chars	1.67
+https://www.glassdoor.com/	not read	bot check	0.14
+https://www.indeed.com/	read	9956 chars	0.21
+https://www.zillow.com/	not read	only 319 chars	0.27
+https://www.tripadvisor.com/	read	3235 chars	0.20
+https://www.booking.com/	read	7120 chars	0.83
+https://www.imdb.com/title/tt0111161/	not read	Failed to fetch url	4.30
+https://www.g2.com/	read	38992 chars	0.28
+https://www.crunchbase.com/organization/anthropic	read	16578 chars	0.38
+https://www.researchgate.net/	read	1412 chars	0.19
+https://www.sciencedirect.com/	read	3242 chars	2.11
+https://www.nature.com/	read	23945 chars	0.15
+https://www.youtube.com/watch?v=dQw4w9WgXcQ	read	25771 chars	0.27
+https://scholar.google.com/scholar?q=transformer+attention	not read	Keyless Keenable extract failed: {"error":"Upstream forbidden","message":"The target server denied access to this URL"}.	3.14
+https://openai.com/	read	622 chars	0.17
+https://www.etsy.com/	read	1437 chars	0.64
+https://www.walmart.com/	read	14977 chars	0.17
+https://www.bestbuy.com/	read	2783 chars	0.18
+https://www.target.com/	read	6018 chars	0.32
+https://github.com/rust-lang/rust	read	3072 chars	0.18
+https://en.wikipedia.org/wiki/Web_scraping	read	18537 chars	0.67
+https://news.ycombinator.com/	read	20059 chars	0.14

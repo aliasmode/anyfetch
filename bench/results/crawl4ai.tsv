@@ -1,0 +1,97 @@
+https://www.nytimes.com/	not read	crawl failed: Blocked by anti-bot protection: DataDome captcha	0.86
+https://www.bbc.com/news	read	23248 chars	1.34
+https://www.bloomberg.com/	not read	crawl failed: Blocked by anti-bot protection: PerimeterX block	0.86
+https://www.usatoday.com/	not read	http 402 (only 155 chars by judge)	0.33
+https://www.cnn.com/	read	93843 chars	4.84
+https://www.washingtonpost.com/	read	56861 chars	7.06
+https://www.theguardian.com/international	read	77445 chars	1.67
+https://www.theatlantic.com/	read	35395 chars	3.16
+https://apnews.com/	read	195817 chars	13.14
+https://www.nbcnews.com/	read	62974 chars	4.13
+https://www.cnbc.com/	read	41362 chars	2.42
+https://www.npr.org/	read	153079 chars	4.00
+https://www.ft.com/	read	57688 chars	1.98
+https://www.forbes.com/	read	105931 chars	2.75
+https://www.businessinsider.com/	read	32722 chars	1.73
+https://www.latimes.com/	read	200595 chars	2.41
+https://www.newsweek.com/	read	86525 chars	3.23
+https://www.vox.com/	read	56158 chars	4.11
+https://people.com/	read	35622 chars	2.29
+https://www.lemonde.fr/	read	31242 chars	1.54
+https://www.lefigaro.fr/	read	129556 chars	2.39
+https://www.dailymail.co.uk/home/index.html	not read	crawl failed: Blocked by anti-bot protection: Akamai block (Reference #)	0.49
+https://www.telegraph.co.uk/	not read	http 402 (912 chars by judge)	0.80
+https://news.sky.com/	not read	crawl failed: Blocked by anti-bot protection: Akamai block (Reference #)	0.32
+https://nypost.com/	read	132537 chars	4.57
+https://www.wsj.com/	not read	crawl failed: Blocked by anti-bot protection: DataDome captcha	0.95
+https://abcnews.go.com/	read	48754 chars	3.88
+https://www.buzzfeed.com/	read	66044 chars	2.32
+https://www.huffpost.com/	read	58070 chars	3.81
+https://thehill.com/	not read	crawl failed: Blocked by anti-bot protection: PerimeterX block	1.03
+https://www.reuters.com/	not read	crawl failed: Blocked by anti-bot protection: DataDome captcha	0.72
+https://www.economist.com/	not read	crawl failed: Blocked by anti-bot protection: Cloudflare JS challenge	0.50
+https://www.wired.com/	read	32110 chars	3.87
+https://arstechnica.com/	read	43714 chars	2.04
+https://www.theverge.com/	read	61650 chars	3.21
+https://techcrunch.com/	read	45556 chars	1.76
+https://www.cnet.com/	read	61006 chars	1.99
+https://www.zdnet.com/	read	32261 chars	1.91
+https://mashable.com/	read	43716 chars	1.45
+https://www.instagram.com/instagram/	read	13935 chars	1.29
+https://x.com/elonmusk	read	7773 chars	2.34
+https://www.tiktok.com/@tiktok	read	6018 chars	2.85
+https://www.pinterest.com/pinterest/	read	3534 chars	1.25
+https://www.linkedin.com/company/anthropicresearch/	read	52047 chars	1.69
+https://www.tumblr.com/explore/trending	read	19960 chars	3.26
+https://medium.com/tag/technology	read	30168 chars	1.61
+https://www.quora.com/What-is-web-scraping	read	11899 chars	1.87
+https://www.reddit.com/r/technology/	not read	only 220 chars	0.62
+https://vimeo.com/watch	read	3341 chars	2.11
+https://www.flickr.com/explore	read	8559 chars	2.29
+https://unsplash.com/	not read	bot check	0.47
+https://www.pexels.com/	read	31057 chars	2.28
+https://www.behance.net/	not read	crawl failed: Blocked by anti-bot protection: HTTP 403 with HTML content (1616341 bytes)	4.56
+https://bandcamp.com/	read	2487 chars	0.39
+https://www.patreon.com/	read	23127 chars	1.80
+https://www.slideshare.net/	read	14280 chars	1.80
+https://starwars.fandom.com/wiki/Luke_Skywalker	read	1488606 chars	18.76
+https://www.ted.com/talks	read	17182 chars	2.54
+https://www.figma.com/	read	23315 chars	1.76
+https://www.rollingstone.com/	read	36341 chars	3.33
+https://www.yahoo.com/	read	19171 chars	2.75
+https://www.msn.com/	not read	only 1 chars	1.32
+https://weather.com/	read	4392 chars	1.25
+https://www.healthline.com/	read	22234 chars	2.37
+https://www.webmd.com/	read	28930 chars	1.61
+https://www.investopedia.com/	read	25974 chars	2.00
+https://www.yelp.com/	not read	crawl failed: Blocked by anti-bot protection: DataDome captcha	0.39
+https://www.amazon.com/	not read	crawl failed: Blocked by anti-bot protection: Structural: no <body> tag (32719 bytes)	0.70
+https://www.ebay.com/	not read	crawl failed: Blocked by anti-bot protection: HTTP 403 with HTML content (1830 bytes)	0.55
+https://www.congress.gov/	not read	crawl failed: Blocked by anti-bot protection: Cloudflare JS challenge	0.54
+https://www.unesco.org/en	read	19377 chars	1.53
+https://www.alibaba.com/	read	16853 chars	2.15
+https://www.espn.com/	not read	only 1 chars	0.68
+https://www.cbsnews.com/	read	28659 chars	1.17
+https://www.wattpad.com/	read	20922 chars	1.44
+https://stackoverflow.com/questions/11227809/why-is-processing-a-sorted-array-faster-than-processing-an-unsorted-array	not read	crawl failed: Blocked by anti-bot protection: Cloudflare JS challenge	0.58
+https://www.glassdoor.com/	not read	http 401 (929 chars by judge)	3.70
+https://www.indeed.com/	not read	crawl failed: Blocked by anti-bot protection: Cloudflare JS challenge	3.52
+https://www.zillow.com/	not read	crawl failed: Blocked by anti-bot protection: PerimeterX block	1.19
+https://www.tripadvisor.com/	not read	crawl failed: Blocked by anti-bot protection: DataDome captcha	0.93
+https://www.booking.com/	not read	only 1 chars	0.72
+https://www.imdb.com/title/tt0111161/	not read	crawl failed: Blocked by anti-bot protection: Structural: no <body> tag (21413 bytes)	1.82
+https://www.g2.com/	not read	crawl failed: Blocked by anti-bot protection: DataDome captcha	0.77
+https://www.crunchbase.com/organization/anthropic	not read	crawl failed: Blocked by anti-bot protection: HTTP 403 with HTML content (5402 bytes)	0.45
+https://www.researchgate.net/	not read	crawl failed: Blocked by anti-bot protection: DataDome captcha	0.56
+https://www.sciencedirect.com/	read	16194 chars	1.36
+https://www.nature.com/	read	24286 chars	2.00
+https://www.youtube.com/watch?v=dQw4w9WgXcQ	read	1535 chars	4.59
+https://scholar.google.com/scholar?q=transformer+attention	read	20472 chars	0.79
+https://openai.com/	read	11106 chars	1.37
+https://www.etsy.com/	not read	crawl failed: Blocked by anti-bot protection: DataDome captcha	0.60
+https://www.walmart.com/	read	26074 chars	2.79
+https://www.bestbuy.com/	read	2485 chars	1.41
+https://www.target.com/	not read	crawl failed: Blocked by anti-bot protection: HTTP 429 Too Many Requests	0.43
+https://github.com/rust-lang/rust	read	20611 chars	1.62
+https://en.wikipedia.org/wiki/Web_scraping	read	71212 chars	0.99
+https://news.ycombinator.com/	read	17393 chars	0.96

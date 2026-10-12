@@ -1,0 +1,97 @@
+https://www.nytimes.com/	not read	http 403	0.11
+https://www.bbc.com/news	read	9760 chars	0.10
+https://www.bloomberg.com/	not read	http 403	0.32
+https://www.usatoday.com/	not read	http 402	0.07
+https://www.cnn.com/	read	20902 chars	0.33
+https://www.washingtonpost.com/	read	13534 chars	1.04
+https://www.theguardian.com/international	read	19432 chars	0.41
+https://www.theatlantic.com/	not read	http 403	0.35
+https://apnews.com/	not read	http 403	0.26
+https://www.nbcnews.com/	read	16616 chars	0.31
+https://www.cnbc.com/	read	10090 chars	0.43
+https://www.npr.org/	read	50339 chars	0.37
+https://www.ft.com/	not read	http 403	0.09
+https://www.forbes.com/	read	21366 chars	0.23
+https://www.businessinsider.com/	read	9125 chars	0.14
+https://www.latimes.com/	read	26851 chars	0.22
+https://www.newsweek.com/	read	22630 chars	0.18
+https://www.vox.com/	read	13464 chars	0.18
+https://people.com/	not read	http 402	0.13
+https://www.lemonde.fr/	read	10843 chars	0.17
+https://www.lefigaro.fr/	read	49881 chars	0.25
+https://www.dailymail.co.uk/home/index.html	read	88680 chars	0.96
+https://www.telegraph.co.uk/	not read	http 402	0.44
+https://news.sky.com/	not read	http 403	0.08
+https://nypost.com/	read	26328 chars	2.22
+https://www.wsj.com/	not read	http 401	0.13
+https://abcnews.go.com/	read	12568 chars	0.40
+https://www.buzzfeed.com/	read	2617 chars	0.16
+https://www.huffpost.com/	read	10968 chars	0.28
+https://thehill.com/	not read	http 403	0.22
+https://www.reuters.com/	not read	http 401	0.18
+https://www.economist.com/	not read	http 403	0.07
+https://www.wired.com/	read	7189 chars	0.24
+https://arstechnica.com/	read	9141 chars	0.21
+https://www.theverge.com/	read	17734 chars	0.13
+https://techcrunch.com/	read	13031 chars	0.12
+https://www.cnet.com/	read	17289 chars	0.13
+https://www.zdnet.com/	read	9603 chars	0.10
+https://mashable.com/	read	10270 chars	0.12
+https://www.instagram.com/instagram/	not read	only 9 chars	0.29
+https://x.com/elonmusk	read	2250 chars	0.74
+https://www.tiktok.com/@tiktok	not read	only 22 chars	0.76
+https://www.pinterest.com/pinterest/	read	884 chars	0.56
+https://www.linkedin.com/company/anthropicresearch/	read	18524 chars	0.74
+https://www.tumblr.com/explore/trending	not read	only 119 chars	0.58
+https://medium.com/tag/technology	not read	http 403	0.07
+https://www.quora.com/What-is-web-scraping	not read	http 403	0.07
+https://www.reddit.com/r/technology/	not read	only 6 chars	0.06
+https://vimeo.com/watch	not read	only 222 chars	0.23
+https://www.flickr.com/explore	read	790 chars	0.42
+https://unsplash.com/	not read	http 401	0.11
+https://www.pexels.com/	not read	http 403	0.11
+https://www.behance.net/	not read	http 403	0.09
+https://bandcamp.com/	not read	http 403	0.07
+https://www.patreon.com/	read	5184 chars	0.14
+https://www.slideshare.net/	not read	bot check	0.07
+https://starwars.fandom.com/wiki/Luke_Skywalker	not read	http 403	0.06
+https://www.ted.com/talks	read	2518 chars	0.09
+https://www.figma.com/	read	4105 chars	0.36
+https://www.rollingstone.com/	read	9670 chars	0.10
+https://www.yahoo.com/	read	3025 chars	0.45
+https://www.msn.com/	not read	only 3 chars	0.12
+https://weather.com/	read	982 chars	0.13
+https://www.healthline.com/	read	6416 chars	0.24
+https://www.webmd.com/	read	6303 chars	0.15
+https://www.investopedia.com/	not read	http 402	0.08
+https://www.yelp.com/	not read	http 403	0.12
+https://www.amazon.com/	not read	only 0 chars	0.08
+https://www.ebay.com/	not read	http 403	0.14
+https://www.congress.gov/	not read	http 403	0.07
+https://www.unesco.org/en	read	7136 chars	0.77
+https://www.alibaba.com/	read	125086 chars	0.75
+https://www.espn.com/	read	7246 chars	0.09
+https://www.cbsnews.com/	read	9120 chars	0.10
+https://www.wattpad.com/	read	2433 chars	0.26
+https://stackoverflow.com/questions/11227809/why-is-processing-a-sorted-array-faster-than-processing-an-unsorted-array	not read	http 403	0.09
+https://www.glassdoor.com/	not read	http 403	0.08
+https://www.indeed.com/	not read	http 403	0.07
+https://www.zillow.com/	read	7019 chars	0.30
+https://www.tripadvisor.com/	not read	http 403	0.09
+https://www.booking.com/	not read	only 0 chars	0.25
+https://www.imdb.com/title/tt0111161/	not read	only 0 chars	0.10
+https://www.g2.com/	not read	http 403	0.08
+https://www.crunchbase.com/organization/anthropic	not read	http 403	0.07
+https://www.researchgate.net/	not read	http 403	0.07
+https://www.sciencedirect.com/	not read	http 403	0.10
+https://www.nature.com/	read	10323 chars	1.20
+https://www.youtube.com/watch?v=dQw4w9WgXcQ	not read	only 248 chars	1.04
+https://scholar.google.com/scholar?q=transformer+attention	read	5997 chars	0.27
+https://openai.com/	not read	http 403	0.07
+https://www.etsy.com/	not read	http 403	0.11
+https://www.walmart.com/	read	3751 chars	0.17
+https://www.bestbuy.com/	read	742 chars	0.18
+https://www.target.com/	read	2849 chars	1.06
+https://github.com/rust-lang/rust	read	6169 chars	0.48
+https://en.wikipedia.org/wiki/Web_scraping	read	31030 chars	0.14
+https://news.ycombinator.com/	read	4025 chars	0.30

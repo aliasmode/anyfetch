@@ -353,6 +353,22 @@ In single runs, Anyfetch answered 32 and 33 questions, and the built-in tools 28
 
 Three things to know about this test. The question writer used Anyfetch to check each answer, so the first group has only pages that Anyfetch can read. The Financial Times was on the writer's list and has no question: its articles need a subscription. Thirty of the questions are one day older than the test; 28 of their answers were checked on the source page again that day. Every answer is in [`bench/results/tasks.tsv`](bench/results/tasks.tsv).
 
+We also read the same 97 sites with eight other tools, each with its default settings and no API key:
+
+| Tool | Pages read |
+| --- | --- |
+| **Anyfetch** | **82** |
+| Exa MCP (hosted, answers from stored copies) | 78 |
+| Scrapling, stealth browser | 71 |
+| Scrapling, plain HTTP | 69 |
+| Hermes Agent `web_extract` (hosted readers) | 68 |
+| Crawl4AI | 66 |
+| Jina Reader | 61 |
+| Playwright MCP | 52 |
+| DuckDuckGo MCP server | 49 |
+
+How each one ran, and what to know before you compare, is in [`bench/other-tools/NOTES.md`](bench/other-tools/NOTES.md). The full ranking with every site is on [aliasmode.com](https://aliasmode.com/anyfetch/best-web-fetch-tools-for-ai-agents/).
+
 The per-site results are in [`bench/results/`](bench/results). Sites change their rules often, and results differ between networks, so run it yourself:
 
 ```sh

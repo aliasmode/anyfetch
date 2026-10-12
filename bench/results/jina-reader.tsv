@@ -1,0 +1,97 @@
+https://www.nytimes.com/	read	119766 chars	3.83
+https://www.bbc.com/news	read	22561 chars	3.53
+https://www.bloomberg.com/	not read	http 403	19.54
+https://www.usatoday.com/	read	27863 chars	3.71
+https://www.cnn.com/	read	141820 chars	4.12
+https://www.washingtonpost.com/	read	55810 chars	3.80
+https://www.theguardian.com/international	read	44721 chars	4.03
+https://www.theatlantic.com/	not read	http 403	3.65
+https://apnews.com/	read	210007 chars	4.24
+https://www.nbcnews.com/	read	96081 chars	3.78
+https://www.cnbc.com/	read	55034 chars	3.68
+https://www.npr.org/	read	155476 chars	3.86
+https://www.ft.com/	not read	http 403	3.59
+https://www.forbes.com/	read	124670 chars	10.39
+https://www.businessinsider.com/	read	13879 chars	9.73
+https://www.latimes.com/	read	207655 chars	3.86
+https://www.newsweek.com/	not read	reader http 403: {"data":null,"code":403,"name":"AbuseAlleviationError","status":40305,"message":	3.37
+https://www.vox.com/	read	17263 chars	11.36
+https://people.com/	not read	reader http 451: {"code": 451, "status": 45101, "message": "This domain is excluded from Jina Rea	3.27
+https://www.lemonde.fr/	read	30987 chars	5.59
+https://www.lefigaro.fr/	read	57695 chars	5.06
+https://www.dailymail.co.uk/home/index.html	read	88436 chars	20.21
+https://www.telegraph.co.uk/	not read	http 402	5.04
+https://news.sky.com/	not read	http 403	3.73
+https://nypost.com/	not read	reader http 403: {"data":null,"code":403,"name":"AbuseAlleviationError","status":40305,"message":	3.37
+https://www.wsj.com/	not read	only 10 chars	18.79
+https://abcnews.go.com/	read	49879 chars	4.31
+https://www.buzzfeed.com/	not read	reader http 403: {"data":null,"code":403,"name":"AbuseAlleviationError","status":40305,"message":	3.37
+https://www.huffpost.com/	read	59728 chars	9.81
+https://thehill.com/	read	64887 chars	3.64
+https://www.reuters.com/	not read	only 14 chars	18.50
+https://www.economist.com/	not read	http 403	3.59
+https://www.wired.com/	read	37330 chars	12.76
+https://arstechnica.com/	read	48726 chars	3.59
+https://www.theverge.com/	not read	reader http 403: {"data":null,"code":403,"name":"AbuseAlleviationError","status":40305,"message":	3.33
+https://techcrunch.com/	read	46143 chars	3.89
+https://www.cnet.com/	read	62355 chars	12.19
+https://www.zdnet.com/	read	18816 chars	5.27
+https://mashable.com/	not read	reader http 403: {"data":null,"code":403,"name":"AbuseAlleviationError","status":40305,"message":	3.35
+https://www.instagram.com/instagram/	not read	reader http 403: {"data":null,"code":403,"name":"AbuseAlleviationError","status":40305,"message":	3.36
+https://x.com/elonmusk	not read	reader http 403: {"data":null,"code":403,"name":"AbuseAlleviationError","status":40305,"message":	3.32
+https://www.tiktok.com/@tiktok	read	8306 chars	3.59
+https://www.pinterest.com/pinterest/	read	8722 chars	10.60
+https://www.linkedin.com/company/anthropicresearch/	read	61915 chars	9.12
+https://www.tumblr.com/explore/trending	read	690 chars	14.97
+https://medium.com/tag/technology	not read	bot check	8.41
+https://www.quora.com/What-is-web-scraping	not read	bot check	5.05
+https://www.reddit.com/r/technology/	not read	reader http 403: {"data":null,"code":403,"name":"AbuseAlleviationError","status":40305,"message":	3.37
+https://vimeo.com/watch	read	15722 chars	9.45
+https://www.flickr.com/explore	read	27429 chars	7.32
+https://unsplash.com/	not read	http 403	3.63
+https://www.pexels.com/	read	41052 chars	3.68
+https://www.behance.net/	read	31769 chars	6.17
+https://bandcamp.com/	read	9487 chars	7.34
+https://www.patreon.com/	read	5459 chars	3.53
+https://www.slideshare.net/	read	3297 chars	3.62
+https://starwars.fandom.com/wiki/Luke_Skywalker	read	612044 chars	20.15
+https://www.ted.com/talks	read	17361 chars	10.00
+https://www.figma.com/	read	25214 chars	3.71
+https://www.rollingstone.com/	not read	reader http 403: {"data":null,"code":403,"name":"AbuseAlleviationError","status":40305,"message":	3.39
+https://www.yahoo.com/	not read	only 80 chars	11.12
+https://www.msn.com/	not read	only 64 chars	3.45
+https://weather.com/	not read	reader http 403: {"data":null,"code":403,"name":"AbuseAlleviationError","status":40305,"message":	3.39
+https://www.healthline.com/	read	6929 chars	3.53
+https://www.webmd.com/	read	37295 chars	11.87
+https://www.investopedia.com/	not read	reader http 451: {"code": 451, "status": 45101, "message": "This domain is excluded from Jina Rea	3.27
+https://www.yelp.com/	not read	only 11 chars	18.67
+https://www.amazon.com/	not read	only 333 chars	3.50
+https://www.ebay.com/	not read	http 403	4.58
+https://www.congress.gov/	read	39194 chars	4.44
+https://www.unesco.org/en	read	19903 chars	3.58
+https://www.alibaba.com/	not read	reader http 403: {"data":null,"code":403,"name":"AbuseAlleviationError","status":40305,"message":	4.72
+https://www.espn.com/	read	117346 chars	10.56
+https://www.cbsnews.com/	read	30080 chars	3.56
+https://www.wattpad.com/	read	22211 chars	3.51
+https://stackoverflow.com/questions/11227809/why-is-processing-a-sorted-array-faster-than-processing-an-unsorted-array	read	103688 chars	3.79
+https://www.glassdoor.com/	not read	http 403	3.49
+https://www.indeed.com/	not read	bot check	5.59
+https://www.zillow.com/	read	29443 chars	3.61
+https://www.tripadvisor.com/	read	22138 chars	3.54
+https://www.booking.com/	read	112373 chars	3.85
+https://www.imdb.com/title/tt0111161/	read	13081 chars	3.84
+https://www.g2.com/	not read	only 9 chars	18.55
+https://www.crunchbase.com/organization/anthropic	not read	bot check	6.44
+https://www.researchgate.net/	not read	bot check	5.30
+https://www.sciencedirect.com/	read	19685 chars	3.55
+https://www.nature.com/	read	24860 chars	3.57
+https://www.youtube.com/watch?v=dQw4w9WgXcQ	not read	http 401	7.90
+https://scholar.google.com/scholar?q=transformer+attention	not read	http 403	4.69
+https://openai.com/	read	13969 chars	3.63
+https://www.etsy.com/	read	12663 chars	3.52
+https://www.walmart.com/	read	79924 chars	3.68
+https://www.bestbuy.com/	read	11331 chars	12.21
+https://www.target.com/	read	8536 chars	3.60
+https://github.com/rust-lang/rust	read	24429 chars	3.65
+https://en.wikipedia.org/wiki/Web_scraping	read	49119 chars	3.65
+https://news.ycombinator.com/	read	15815 chars	3.53
