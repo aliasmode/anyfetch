@@ -24,6 +24,7 @@ const FIREFOX: (Profile, Platform) = (Profile::Firefox151, Platform::Linux);
 fn client(
     (profile, platform): (Profile, Platform),
     cleared: Option<(&Clearance, &str)>,
+    direct: bool,
 ) -> Result<Client, ToolError> {
     let jar = Jar::default();
     for cookie in cleared.iter().flat_map(|(clearance, _)| &clearance.cookies) {
@@ -43,38 +44,68 @@ fn client(
         .redirect(wreq::redirect::Policy::default())
         .timeout(TIMEOUT)
         .no_proxy();
-    if let Some(proxy) = proxy()? {
+    if !direct && let (Some(proxy), _) = proxy()? {
         builder = builder.proxy(proxy);
     }
     Ok(builder.build()?)
 }
 
 /// Optional HTTP proxy from `~/.config/anyfetch/proxy`: one `host:port:username:password` line.
-fn proxy() -> Result<Option<Proxy>, ToolError> {
+/// Then every request goes through the proxy. With a second line `direct`, a request that is
+/// refused through the proxy is sent again straight to the site.
+fn proxy() -> Result<(Option<Proxy>, bool), ToolError> {
     let Some(home) = std::env::home_dir() else {
-        return Ok(None);
+        return Ok((None, false));
     };
-    let Ok(line) = std::fs::read_to_string(home.join(".config/anyfetch/proxy")) else {
-        return Ok(None);
+    let Ok(file) = std::fs::read_to_string(home.join(".config/anyfetch/proxy")) else {
+        return Ok((None, false));
     };
     let invalid = || {
         ToolError::new(
             "proxy_error",
-            "The proxy file must contain host:port:username:password",
+            "The proxy file must contain host:port:username:password, and can have a second line: direct",
         )
     };
-    let mut parts = line.trim().splitn(4, ':');
+    let mut lines = file.lines().map(str::trim).filter(|line| !line.is_empty());
+    let mut parts = lines.next().unwrap_or_default().splitn(4, ':');
     let (Some(host), Some(port), Some(username), Some(password)) =
         (parts.next(), parts.next(), parts.next(), parts.next())
     else {
         return Err(invalid());
     };
-    Ok(Some(
-        Proxy::all(format!("http://{host}:{port}"))
-            .map_err(|_| invalid())?
-            .basic_auth(username, password)
-            .no_proxy(NoProxy::from_string("localhost,127.0.0.1,::1")),
-    ))
+    let both = match lines.next() {
+        None => false,
+        Some("direct") => true,
+        Some(_) => return Err(invalid()),
+    };
+    let proxy = Proxy::all(format!("http://{host}:{port}"))
+        .map_err(|_| invalid())?
+        .basic_auth(username, password)
+        .no_proxy(NoProxy::from_string("localhost,127.0.0.1,::1"));
+    Ok((Some(proxy), both))
+}
+
+/// Runs `request` through the proxy if there is one. When the site refuses the proxy's address,
+/// or the proxy does not answer, and the user allows both routes, runs it again without the
+/// proxy. `request` gets `true` for the route without the proxy.
+async fn routed<F: Future<Output = Result<Body, ToolError>>>(
+    request: impl Fn(bool) -> F,
+) -> Result<Body, ToolError> {
+    let (proxy, both) = proxy()?;
+    match request(proxy.is_none()).await {
+        Err(error) if both && refused(&error) => request(true).await.or(Err(error)),
+        result => result,
+    }
+}
+
+fn refused(error: &ToolError) -> bool {
+    let codes = [
+        "challenge_required",
+        "rate_limited",
+        "network_error",
+        "timeout",
+    ];
+    codes.contains(&error.code) || matches!(error.status, Some(401..=403))
 }
 
 pub(crate) struct Body {
@@ -100,7 +131,7 @@ impl Body {
 }
 
 pub(crate) async fn get(url: &str, accept: fn(&str) -> bool) -> Result<Body, ToolError> {
-    attempt(url, accept, IDENTITIES[0], None).await
+    routed(|direct| attempt(url, accept, IDENTITIES[0], None, direct)).await
 }
 
 /// Like `get`, but retries a refused page. Cloudflare's verdict on one identical request varies
@@ -112,28 +143,37 @@ pub(crate) async fn get_page(
     accept: fn(&str) -> bool,
     browser: Option<&Path>,
 ) -> Result<Body, ToolError> {
+    routed(|direct| page(url, accept, browser, direct)).await
+}
+
+async fn page(
+    url: &str,
+    accept: fn(&str) -> bool,
+    browser: Option<&Path>,
+    direct: bool,
+) -> Result<Body, ToolError> {
     let host = Url::parse(url)
         .ok()
         .and_then(|url| url.host_str().map(str::to_owned));
     // A clearance is tied to the address that earned it, so it is no use behind a proxy.
-    let direct = direct();
     if direct
         && let Some(host) = &host
         && let Some(saved) = clearance::load(host)
     {
-        match attempt(url, accept, FIREFOX, Some(&saved)).await {
+        match attempt(url, accept, FIREFOX, Some(&saved), direct).await {
             Err(error) if cloudflare_challenge(&error) => clearance::forget(host),
             // Let the usual identities try a page that this one is refused.
             Err(error) if matches!(error.status, Some(401 | 403)) => {}
             result => return result,
         }
     }
-    let mut result = get(url, accept).await;
+    let first = || attempt(url, accept, IDENTITIES[0], None, direct);
+    let mut result = first().await;
     for _ in 0..2 {
         if !matches!(&result, Err(error) if cloudflare_challenge(error)) {
             break;
         }
-        result = get(url, accept).await;
+        result = first().await;
     }
     match result {
         Err(error) if cloudflare_challenge(&error) => {
@@ -141,12 +181,12 @@ pub(crate) async fn get_page(
                 return Err(error);
             };
             match clearance::ensure(browser, url).await {
-                Ok(fresh) => attempt(url, accept, FIREFOX, Some(&fresh)).await,
+                Ok(fresh) => attempt(url, accept, FIREFOX, Some(&fresh), direct).await,
                 Err(_) => Err(error),
             }
         }
         Err(error) if matches!(error.status, Some(401 | 403)) => {
-            match attempt(url, accept, IDENTITIES[1], None).await {
+            match attempt(url, accept, IDENTITIES[1], None, direct).await {
                 Err(retry) if matches!(retry.code, "challenge_required" | "rate_limited") => {
                     Err(retry)
                 }
@@ -162,9 +202,9 @@ fn cloudflare_challenge(error: &ToolError) -> bool {
     error.code == "challenge_required" && error.status == Some(403)
 }
 
-/// True when requests go straight to the site and not through a proxy.
+/// True when requests may go straight to the site and not only through a proxy.
 pub(crate) fn direct() -> bool {
-    matches!(proxy(), Ok(None))
+    matches!(proxy(), Ok((None, _) | (_, true)))
 }
 
 /// The browser is kept away from addresses that are not public sites.
@@ -185,8 +225,9 @@ async fn attempt(
     accept: fn(&str) -> bool,
     identity: (Profile, Platform),
     cleared: Option<&Clearance>,
+    direct: bool,
 ) -> Result<Body, ToolError> {
-    let client = client(identity, cleared.map(|clearance| (clearance, url)))?;
+    let client = client(identity, cleared.map(|clearance| (clearance, url)), direct)?;
     let get = |target: &str| match cleared {
         Some(clearance) => client
             .get(target)

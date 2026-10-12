@@ -252,3 +252,66 @@ async fn cli_setup_connects_the_harnesses_on_the_path() {
     assert_eq!(cursor["mcpServers"]["anyfetch"]["command"], program);
     let _ = std::fs::remove_dir_all(home);
 }
+
+// 127.0.0.2 is a loopback address that the proxy does not skip. Only Linux has it by default.
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn cli_goes_direct_when_the_proxy_route_is_refused_and_the_file_allows_it() {
+    let proxy = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let origin = TcpListener::bind("127.0.0.2:0").await.unwrap();
+    let url = format!("http://{}/page", origin.local_addr().unwrap());
+    let home = std::env::temp_dir().join(format!("anyfetch-routes-{}", std::process::id()));
+    let config = home.join(".config/anyfetch");
+    std::fs::create_dir_all(&config).unwrap();
+    let file = format!("{}:user:pass\ndirect\n", proxy.local_addr().unwrap());
+    std::fs::write(config.join("proxy"), file).unwrap();
+    async fn answer(listener: &TcpListener, status: &str, body: &str) {
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let mut request = Vec::new();
+        while !request.ends_with(b"\r\n\r\n") {
+            request.push(socket.read_u8().await.unwrap());
+        }
+        let head = format!(
+            "HTTP/1.1 {status}\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            body.len()
+        );
+        socket
+            .write_all(format!("{head}{body}").as_bytes())
+            .await
+            .unwrap();
+    }
+    let fixture = tokio::spawn(async move {
+        // The proxy route is refused for both browser identities, then the site is asked directly.
+        answer(&proxy, "403 Forbidden", "<html><body>Denied</body></html>").await;
+        answer(&proxy, "403 Forbidden", "<html><body>Denied</body></html>").await;
+        let page = "<html><head><title>Direct</title></head><body><article><h1>Direct</h1><p>This page came straight from the site, and it has enough words to count as an article for the reader.</p></article></body></html>";
+        answer(&origin, "200 OK", page).await;
+    });
+    let output = timeout(
+        Duration::from_secs(10),
+        Command::new(env!("CARGO_BIN_EXE_anyfetch"))
+            .args(["fetch", &url])
+            .env("HOME", &home)
+            .env("ANYFETCH_BROWSER", "off")
+            .env("ANYFETCH_RENDERER", "off")
+            .kill_on_drop(true)
+            .output(),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    fixture.await.unwrap();
+    std::fs::remove_dir_all(&home).unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(
+        value["content"]
+            .as_str()
+            .unwrap()
+            .contains("came straight from the site")
+    );
+}

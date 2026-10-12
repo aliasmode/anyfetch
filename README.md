@@ -323,6 +323,8 @@ host:port:username:password
 
 Anyfetch then sends every search and fetch through that HTTP proxy. The file holds the password in plain text, so keep it private: `chmod 600 ~/.config/anyfetch/proxy`. Delete the file to go direct again.
 
+Some sites accept your own address and refuse the proxy's address. To reach both kinds, add a second line with the word `direct`. Anyfetch then tries the proxy first, and asks the site directly when the proxy route is refused.
+
 Need a proxy? Use [NobleProxy](https://nobleproxy.com/?utm_source=anyfetch&utm_medium=readme&utm_campaign=anyfetch), our own service. In our test, one NobleProxy address took Anyfetch from 73 to 78 of the 97 sites, with the same result in every run. It opened The Wall Street Journal, Glassdoor, Tripadvisor, Yelp and Etsy, which refuse a server address. You get a static residential IP that only you use, with unlimited bandwidth and HTTP support.
 
 ## What it does not do
