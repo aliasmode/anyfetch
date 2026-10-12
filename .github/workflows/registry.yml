@@ -52,17 +52,18 @@ jobs:
       github.event_name == 'workflow_dispatch' ||
       (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
     runs-on: ubuntu-latest
+    # npm accepts a publish from this workflow with no token: it is the trusted publisher of
+    # the packages. npm/first-publish.sh sets that up; a person runs it once.
     permissions:
       contents: read
+      id-token: write
     env:
       GH_TOKEN: ${{ github.token }}
-      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v5
         with:
           node-version: 24
-          registry-url: https://registry.npmjs.org
 
       - name: Build the packages from the release
         run: |
@@ -77,12 +78,13 @@ jobs:
           npx anyfetch --version
           (echo "$START"; sleep 3) | npx anyfetch mcp | grep -q '"name":"anyfetch"'
 
-      # Without the NPM_TOKEN secret the packages are built and checked, but not published.
       - name: Publish to npm
-        if: env.NPM_TOKEN != ''
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
+          if ! npm view @aliasmode/anyfetch name > /dev/null 2>&1; then
+            echo "The packages are not on npm yet. Run npm/first-publish.sh once."
+            exit 0
+          fi
+          npm install -g 'npm@^11.15.0'
           for folder in packages/anyfetch-* packages/anyfetch; do
             name=$(jq -r .name "$folder/package.json")
             npm view "$name@${TAG#v}" version > /dev/null 2>&1 || npm publish "./$folder" --access public
