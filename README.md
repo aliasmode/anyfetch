@@ -8,26 +8,26 @@ Agent harnesses fetch pages with a bot identity, and a large part of the web ans
 
 | 97 popular sites that block AI agents | Pages read |
 | --- | --- |
-| **Anyfetch** | **75** |
-| curl | 47 |
-| Reference MCP fetch server | 41 |
+| **Anyfetch** | **73** |
+| curl | 46 |
+| Reference MCP fetch server | 39 |
 | Claude Code built-in `WebFetch` | 36 |
 
-Anyfetch read 21 sites that no other tool in the table could read. Among them: The New York Times, Reuters, Bloomberg, The Washington Post, Medium, Reddit, Stack Overflow and YouTube.
+Anyfetch read 21 sites that no other tool in the table could read. Among them: The New York Times, Reuters, The Washington Post, AP News, Medium, Reddit, Stack Overflow and YouTube.
 
-| 30 research questions, each asked twice | Answered correctly both times |
+| 33 research questions, each asked twice | Answered correctly both times |
 | --- | --- |
-| **Agent with Anyfetch** | **30** |
-| Same agent with Claude Code built-in `WebSearch` and `WebFetch` | 25 |
+| **Agent with Anyfetch** | **32** |
+| Same agent with Claude Code built-in `WebSearch` and `WebFetch` | 27 |
 
-Ten of the questions are about a page on a site that blocks AI agents. The built-in fetch could not read any of those 10 pages. Its search found the answer in another source for 5 of them. Anyfetch read all 10. The questions were written from pages that Anyfetch can read, so this group shows what the built-in tools miss.
+Thirteen of the questions are about a page on a site that blocks AI agents. The built-in fetch could not read any of those 13 pages. Its search found the answer in another source for 7 of them. Anyfetch answered 12 in both runs. The questions were written from pages that Anyfetch can read, so this group shows what the built-in tools miss.
 
 | One page, started fresh | Time | Peak memory |
 | --- | --- | --- |
 | **Anyfetch** | **0.19 s** | **17 MB** |
 | Headless Chromium | 1.15 s | 544 MB |
 
-Measured on 2026-10-11 from a cloud server, with no proxy. See [how we measured](#benchmark) and how to run it again.
+Sites and questions: measured on 2026-10-12 with version 0.7.1. Time and memory: measured on 2026-10-11. All from a cloud server, with no proxy. See [how we measured](#benchmark) and how to run it again.
 
 ## What your agent gets
 
@@ -334,18 +334,20 @@ Does your agent need a real browser, with logins and saved sessions? Use [AliasM
 
 The numbers at the top come from two scripts and one question set in [`bench/`](bench).
 
-- **Pages read.** `bench/bench.py` reads each of the 97 sites in [`bench/sites.txt`](bench/sites.txt) once with each tool. A page counts as read when the tool returns at least 500 characters of text and the text is not a bot check. The same rule is applied to every tool. Anyfetch ran three times and read 73, 76 and 75 pages; the table shows the middle run. Claude Code's `WebFetch` cannot be scripted, so an agent called it once per site and recorded if real content came back.
+- **Pages read.** `bench/bench.py` reads each of the 97 sites in [`bench/sites.txt`](bench/sites.txt) once with each tool. A page counts as read when the tool returns at least 500 characters of text and the text is not a bot check. The same rule is applied to every tool. Anyfetch ran three times and read 74, 72 and 73 pages; the table shows the middle run. Claude Code's `WebFetch` cannot be scripted, so an agent called it once per site and recorded if real content came back.
 - **Time and memory.** `bench/speed.py` reads 10 pages with each program, started fresh for every page, and reports the median.
 
-- **Research questions.** [`bench/tasks.json`](bench/tasks.json) has 30 questions. Each has one exact answer and the sentence on the source page that proves it. The pages are from July to October 2026, so a model cannot answer from memory. A Claude Sonnet agent answered the questions with Anyfetch only, and again with the built-in `WebSearch` and `WebFetch` of Claude Code only. The instructions were the same: at most 8 web calls for each question, and the answer `UNKNOWN` when the tools do not give it. Anyfetch ran with no proxy, no Firefox and no Lightpanda. Each tool ran twice, and a question counts when both runs are correct.
+- **Research questions.** [`bench/tasks.json`](bench/tasks.json) has 33 questions. Each has one exact answer and the sentence on the source page that proves it. The pages are from July to October 2026, so a model cannot answer from memory. A Claude Sonnet agent answered the questions with Anyfetch only, and again with the built-in `WebSearch` and `WebFetch` of Claude Code only. The instructions were the same: at most 8 web calls for each question, and the answer `UNKNOWN` when the tools do not give it. Anyfetch ran with no proxy, no Firefox and no Lightpanda. Each tool ran twice, and a question counts when both runs are correct.
 
 | Question group | Anyfetch | Built-in tools |
 | --- | --- | --- |
-| A page on a site that blocks AI agents | 10 of 10 | 5 of 10 |
+| A page on a site that blocks AI agents | 12 of 13 | 7 of 13 |
 | A page on an open site | 10 of 10 | 10 of 10 |
 | No URL: search first, then read | 10 of 10 | 10 of 10 |
 
-In each single run the built-in tools answered 26 questions, but not the same 26. Three things to know about this test. The question writer used Anyfetch to check each answer, so the first group has only pages that Anyfetch can read. Four more sites on the writer's list (Reuters, Bloomberg, Financial Times and Quora) have no question, because it could not read an article page there. The site test above reads the home page of Reuters and Bloomberg, which Anyfetch can read. Since version 0.7.0, Anyfetch also reads article pages on Reuters and Bloomberg and the answers on Quora. The Financial Times needs a subscription. One Anyfetch test agent stopped after its first question, so its 5 questions were run again. Every answer is in [`bench/results/tasks.tsv`](bench/results/tasks.tsv).
+In single runs, Anyfetch answered 32 and 33 questions, and the built-in tools 28 and 27. The one Anyfetch miss was a Reddit thread: Reddit limited the rate of the test machine that day, and in one run Anyfetch read a link from a comment in place of the link of the post.
+
+Three things to know about this test. The question writer used Anyfetch to check each answer, so the first group has only pages that Anyfetch can read. The Financial Times was on the writer's list and has no question: its articles need a subscription. Thirty of the questions are one day older than the test; 28 of their answers were checked on the source page again that day. Every answer is in [`bench/results/tasks.tsv`](bench/results/tasks.tsv).
 
 The per-site results are in [`bench/results/`](bench/results). Sites change their rules often, and results differ between networks, so run it yourself:
 
