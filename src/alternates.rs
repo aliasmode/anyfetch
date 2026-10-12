@@ -25,8 +25,8 @@ enum Route {
     Tweet(String),
     PyPi(String),
     Crate(String),
-    /// A Reddit listing or comment thread, by its path.
-    Reddit(String),
+    /// A Reddit listing or comment thread: its path, and the time window of a sorted listing.
+    Reddit(String, String),
     /// A title on IMDb, by its id.
     Imdb(String),
     /// A feed that holds what a home page shows.
@@ -49,8 +49,25 @@ fn route(url: &Url) -> Option<Route> {
         ("pypi.org", ["project", name]) => Some(Route::PyPi(name.to_string())),
         ("crates.io", ["crates", name]) => Some(Route::Crate(name.to_string())),
         // A subreddit listing or a comment thread; other Reddit pages have no such feed.
-        ("reddit.com" | "old.reddit.com", ["r", _] | ["r", _, "comments", ..]) => {
-            Some(Route::Reddit(url.path().trim_end_matches('/').to_owned()))
+        (
+            "reddit.com" | "old.reddit.com",
+            ["r", _]
+            | ["r", _, "comments", ..]
+            | [
+                "r",
+                _,
+                "hot" | "new" | "top" | "rising" | "controversial" | "best",
+            ],
+        ) => {
+            // A sorted listing can name a time window, as in `/top/?t=week`.
+            let mut window = url.query_pairs().filter(|(key, _)| key == "t");
+            let window = window.next().map(|(_, value)| value);
+            let window = window.filter(|value| value.bytes().all(|byte| byte.is_ascii_lowercase()));
+            let window = window.map(|value| format!("&t={value}"));
+            Some(Route::Reddit(
+                url.path().trim_end_matches('/').to_owned(),
+                window.unwrap_or_default(),
+            ))
         }
         // IMDb answers every page with a bot check. Its pages get their data from this API.
         ("imdb.com" | "m.imdb.com", ["title", id, ..])
@@ -132,19 +149,18 @@ pub(crate) async fn read(url: &Url) -> Option<Page> {
                 source: None,
             })
         }
-        Route::Reddit(path) => {
+        Route::Reddit(path, window) => {
             let page = format!("https://www.reddit.com{path}/");
             // The data answers only a visitor of the page. It has all comments and their scores.
-            let data = format!("{page}.json?raw_json=1&limit=500");
+            let data = format!("{page}.json?raw_json=1&limit=500{window}");
             let listing = transport::get_with(&data, &[], Some(&page)).await.ok();
             let listing = listing.and_then(|body| serde_json::from_slice(&body.bytes).ok());
             if let Some(page) = listing.as_ref().and_then(reddit_page) {
                 return Some(page);
             }
             // The feed has less, and Reddit gives a new visitor one feed request in a while.
-            let body = transport::get(&format!("{page}.rss"), |_| true)
-                .await
-                .ok()?;
+            let feed = format!("{page}.rss{}", window.replacen('&', "?", 1));
+            let body = transport::get(&feed, |_| true).await.ok()?;
             feed_page(&body.text())
         }
         Route::Imdb(id) => {
@@ -590,7 +606,14 @@ mod tests {
             ),
             (
                 "https://www.reddit.com/r/rust/comments/abc/a_post/",
-                Some(Route::Reddit("/r/rust/comments/abc/a_post".into())),
+                Some(Route::Reddit(
+                    "/r/rust/comments/abc/a_post".into(),
+                    String::new(),
+                )),
+            ),
+            (
+                "https://www.reddit.com/r/rust/top/?t=week",
+                Some(Route::Reddit("/r/rust/top".into(), "&t=week".into())),
             ),
             ("https://www.reddit.com/r/rust/.rss", None),
             ("https://www.reddit.com/r/rust/wiki/index", None),
