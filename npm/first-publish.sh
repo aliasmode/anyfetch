@@ -40,9 +40,10 @@ for folder in "$work"/packages/anyfetch-* "$work/packages/anyfetch"; do
 done
 npm logout > /dev/null 2>&1 || true
 
-for _ in 1 2 3 4 5 6; do
+echo "npm processes a new package for some minutes before it shows it. Waiting."
+for _ in $(seq 60); do
     [ "$(npm view @aliasmode/anyfetch version 2> /dev/null)" = "$version" ] && break
-    sleep 5
+    sleep 10
 done
 [ "$(npm view @aliasmode/anyfetch version 2> /dev/null)" = "$version" ] \
     || fail "npm does not show @aliasmode/anyfetch $version"

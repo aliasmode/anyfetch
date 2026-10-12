@@ -89,6 +89,12 @@ jobs:
             name=$(jq -r .name "$folder/package.json")
             npm view "$name@${TAG#v}" version > /dev/null 2>&1 || npm publish "./$folder" --access public
           done
+          # npm processes a package for some minutes before it shows it, and the registry
+          # entry can only name a version that npm shows.
+          for attempt in $(seq 60); do
+            npm view "@aliasmode/anyfetch@${TAG#v}" version > /dev/null 2>&1 && break
+            sleep 10
+          done
 
   registry:
     needs: [image, npm]

@@ -62,6 +62,16 @@ The installer puts `anyfetch` in `~/.local/bin`. Then it connects Anyfetch to ea
 
 Did you install a harness later? Run `anyfetch setup`. It uses each harness's own command, tells you what it connected, and is safe to run again.
 
+**Do you have Node.js?** Then no install is needed. Give your MCP client this server, and `npx` gets the program for your platform:
+
+```json
+{
+  "mcpServers": {
+    "anyfetch": { "command": "npx", "args": ["-y", "@aliasmode/anyfetch", "mcp"] }
+  }
+}
+```
+
 **Only Claude Code, on macOS or Linux?** You can install Anyfetch as a plugin instead. The plugin gets the program at its first start:
 
 ```sh
@@ -157,7 +167,7 @@ gemini mcp add -s user anyfetch anyfetch mcp
 
 Any other MCP client: add a stdio server with the command `anyfetch` and the argument `mcp`.
 
-Anyfetch is in the official [MCP Registry](https://registry.modelcontextprotocol.io/v0/servers?search=anyfetch) as `io.github.aliasmode/anyfetch`.
+Anyfetch is in the official [MCP Registry](https://registry.modelcontextprotocol.io/v0/servers?search=anyfetch) as `io.github.aliasmode/anyfetch`, and on npm as [`@aliasmode/anyfetch`](https://www.npmjs.com/package/@aliasmode/anyfetch).
 
 **No MCP?** Give the agent the CLI. Add this to `AGENTS.md` or the harness's instruction file:
 
