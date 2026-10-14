@@ -41,3 +41,14 @@ Time and memory for one page (the Wikipedia article "Web scraping"), with the pr
 | Scrapling, stealth browser | 4.1 to 4.5 s | 630 MB |
 
 To run a row again, install the tool and start its script from this folder, for example `python3 run_scrapling.py http`. The scripts write the text that each tool returned to `raw/`.
+
+## The handshake test
+
+This test holds the header set fixed and changes only the TLS and HTTP/2 handshake, and the reverse. It uses [`examples/handshake.rs`](../../examples/handshake.rs), built on the same library as Anyfetch: one request per site, no retry, no cookies and no site readers. A page counts as read by the rule that `bench.py` uses for curl. Run on 2026-10-14 with [`run_handshake.py`](run_handshake.py).
+
+| Handshake | Safari headers (the 8 that Anyfetch sends, in its order) | curl headers (3) |
+| --- | --- | --- |
+| Safari 26.4 TLS and HTTP/2, as Anyfetch sends | 68 | 46 |
+| The default TLS and HTTP/2 of the library | 63 | 46 |
+
+Each setup was checked on https://tls.peet.ws/api/all: the header list and its order stay the same when only the handshake changes, and the JA4 and HTTP/2 fingerprint stay the same when only the headers change. The default handshake is that of the library (BoringSSL), not that of curl (OpenSSL). A second pass of the two Safari-header rows gave 68 and 62.

@@ -1,0 +1,97 @@
+https://www.nytimes.com/	not read	http 403	0.11
+https://www.bbc.com/news	read	9769 chars	0.11
+https://www.bloomberg.com/	not read	http 403	0.12
+https://www.usatoday.com/	not read	http 402	0.06
+https://www.cnn.com/	read	21825 chars	0.94
+https://www.washingtonpost.com/	not read	error error sending request for uri (https://www.washingtonpost.com/): client error (S	0.11
+https://www.theguardian.com/international	read	19505 chars	0.20
+https://www.theatlantic.com/	not read	http 403	0.15
+https://apnews.com/	not read	http 403	0.06
+https://www.nbcnews.com/	read	17757 chars	0.59
+https://www.cnbc.com/	not read	http 403	0.09
+https://www.npr.org/	read	48642 chars	0.21
+https://www.ft.com/	not read	http 403	0.15
+https://www.forbes.com/	read	21504 chars	0.25
+https://www.businessinsider.com/	read	8640 chars	0.36
+https://www.latimes.com/	read	21959 chars	0.20
+https://www.newsweek.com/	read	22612 chars	0.25
+https://www.vox.com/	read	13327 chars	0.21
+https://people.com/	not read	http 402	0.05
+https://www.lemonde.fr/	read	13249 chars	0.17
+https://www.lefigaro.fr/	read	54933 chars	0.72
+https://www.dailymail.co.uk/home/index.html	not read	http 403	0.14
+https://www.telegraph.co.uk/	not read	http 402	0.24
+https://news.sky.com/	not read	http 403	0.06
+https://nypost.com/	read	27937 chars	3.85
+https://www.wsj.com/	not read	http 403	0.08
+https://abcnews.go.com/	read	12554 chars	0.47
+https://www.buzzfeed.com/	read	2883 chars	0.20
+https://www.huffpost.com/	read	10172 chars	0.41
+https://thehill.com/	not read	http 429	0.06
+https://www.reuters.com/	not read	http 401	0.23
+https://www.economist.com/	not read	http 403	0.21
+https://www.wired.com/	read	7719 chars	0.31
+https://arstechnica.com/	not read	http 403	0.16
+https://www.theverge.com/	read	20489 chars	0.21
+https://techcrunch.com/	read	13106 chars	0.20
+https://www.cnet.com/	read	17463 chars	0.12
+https://www.zdnet.com/	read	9205 chars	0.14
+https://mashable.com/	read	10450 chars	0.19
+https://www.instagram.com/instagram/	read	708 chars	0.49
+https://x.com/elonmusk	read	2339 chars	0.59
+https://www.tiktok.com/@tiktok	not read	only 14 chars	0.28
+https://www.pinterest.com/pinterest/	read	884 chars	0.67
+https://www.linkedin.com/company/anthropicresearch/	not read	http 999	0.11
+https://www.tumblr.com/explore/trending	not read	only 119 chars	0.43
+https://medium.com/tag/technology	not read	http 403	0.04
+https://www.quora.com/What-is-web-scraping	not read	http 403	0.06
+https://www.reddit.com/r/technology/	not read	only 6 chars	0.05
+https://vimeo.com/watch	not read	only 222 chars	0.20
+https://www.flickr.com/explore	read	780 chars	0.80
+https://unsplash.com/	not read	http 401	0.13
+https://www.pexels.com/	not read	http 403	0.06
+https://www.behance.net/	not read	http 403	0.06
+https://bandcamp.com/	not read	bot check	0.07
+https://www.patreon.com/	read	5184 chars	0.14
+https://www.slideshare.net/	read	6022 chars	0.26
+https://starwars.fandom.com/wiki/Luke_Skywalker	not read	http 403	0.04
+https://www.ted.com/talks	read	2518 chars	0.09
+https://www.figma.com/	read	4105 chars	0.48
+https://www.rollingstone.com/	read	9953 chars	0.20
+https://www.yahoo.com/	not read	http 429	0.14
+https://www.msn.com/	not read	only 3 chars	0.13
+https://weather.com/	read	982 chars	0.25
+https://www.healthline.com/	read	6397 chars	0.22
+https://www.webmd.com/	read	6312 chars	0.28
+https://www.investopedia.com/	not read	http 402	0.06
+https://www.yelp.com/	not read	http 403	0.07
+https://www.amazon.com/	read	2623 chars	0.26
+https://www.ebay.com/	not read	http 403	0.12
+https://www.congress.gov/	not read	http 403	0.07
+https://www.unesco.org/en	read	7173 chars	0.49
+https://www.alibaba.com/	read	119393 chars	0.63
+https://www.espn.com/	read	7351 chars	0.09
+https://www.cbsnews.com/	read	7627 chars	0.13
+https://www.wattpad.com/	read	2433 chars	0.35
+https://stackoverflow.com/questions/11227809/why-is-processing-a-sorted-array-faster-than-processing-an-unsorted-array	not read	http 403	0.05
+https://www.glassdoor.com/	not read	http 403	0.20
+https://www.indeed.com/	not read	http 403	0.06
+https://www.zillow.com/	not read	http 403	0.12
+https://www.tripadvisor.com/	not read	http 403	0.07
+https://www.booking.com/	not read	only 0 chars	0.23
+https://www.imdb.com/title/tt0111161/	not read	http 403	0.07
+https://www.g2.com/	not read	http 403	0.08
+https://www.crunchbase.com/organization/anthropic	not read	http 403	0.06
+https://www.researchgate.net/	not read	http 403	0.05
+https://www.sciencedirect.com/	not read	http 403	0.16
+https://www.nature.com/	read	10193 chars	1.10
+https://www.youtube.com/watch?v=dQw4w9WgXcQ	not read	only 248 chars	0.94
+https://scholar.google.com/scholar?q=transformer+attention	not read	http 403	1.22
+https://openai.com/	not read	http 403	0.05
+https://www.etsy.com/	not read	http 403	0.07
+https://www.walmart.com/	read	1412 chars	0.19
+https://www.bestbuy.com/	not read	error error sending request for uri (https://www.bestbuy.com/): client error (SendRequ	0.16
+https://www.target.com/	read	2864 chars	0.63
+https://github.com/rust-lang/rust	read	6169 chars	0.48
+https://en.wikipedia.org/wiki/Web_scraping	read	31030 chars	0.13
+https://news.ycombinator.com/	read	4077 chars	0.35
