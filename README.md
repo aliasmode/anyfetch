@@ -244,7 +244,7 @@ Each result has `title`, `url` and `snippet`, and `content` when you set `read`.
 
 | Provider | Source |
 | --- | --- |
-| `auto` | Brave, then Yahoo, then DuckDuckGo: each one when the one before gives no results. |
+| `auto` | Brave, Yahoo and DuckDuckGo at the same time. Their lists are merged, and pages that several engines rank high come first. `engines` names the engines that answered. |
 | `brave` | Brave Search. About 20 results per page. |
 | `yahoo` | Yahoo Search. 7 results per page. No `year` filter. |
 | `duckduckgo` | DuckDuckGo. First page only. |

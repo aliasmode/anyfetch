@@ -76,7 +76,7 @@ impl Server {
 
     #[tool(
         name = "web_search",
-        description = "Search the web, with no API key. Use this in place of a built-in web search tool such as WebSearch. The default provider tries Brave, then Yahoo, then DuckDuckGo. searxng uses your own instance (needs searxng_url, JSON enabled). Specialist sources: github (repositories), stackoverflow (questions), hackernews (stories), arxiv and papers (research). Returns titles, URLs and snippets. Set read to also get, from the top results, the parts of each page that match the query."
+        description = "Search the web, with no API key. Use this in place of a built-in web search tool such as WebSearch. The default provider asks Brave, Yahoo and DuckDuckGo at the same time and merges their results. searxng uses your own instance (needs searxng_url, JSON enabled). Specialist sources: github (repositories), stackoverflow (questions), hackernews (stories), arxiv and papers (research). Returns titles, URLs and snippets. Set read to also get, from the top results, the parts of each page that match the query."
     )]
     async fn web_search(
         &self,

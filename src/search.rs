@@ -13,7 +13,7 @@ use url::Url;
 pub enum Provider {
     // Plain comments here: a documented variant turns the tool's JSON schema from a simple
     // list of names into a list of objects, which some agent harnesses read badly.
-    // Brave, then Yahoo, then DuckDuckGo: each one when the one before gives no results.
+    // Brave, Yahoo and DuckDuckGo at the same time, with their results merged.
     #[default]
     Auto,
     Brave,
@@ -220,6 +220,9 @@ impl SearchHit {
 pub struct SearchResponse {
     pub query: String,
     pub provider: &'static str,
+    /// The engines whose results `auto` merged.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub engines: Vec<&'static str>,
     pub status: u16,
     pub source_url: String,
     pub retrieved_at: String,
@@ -243,16 +246,61 @@ pub async fn search_with(
     if provider != Provider::Auto {
         return ask(query, provider, searxng_url, filters).await;
     }
-    // Each engine refuses some requests, mostly after many in a short time.
-    for engine in [Provider::Brave, Provider::Yahoo] {
-        if let Ok(response) = ask(query, engine, None, filters).await
-            && !response.results.is_empty()
-        {
-            return Ok(response);
+    // Each engine refuses some requests, mostly after many in a short time, so ask all three.
+    let (brave, yahoo, duckduckgo) = tokio::join!(
+        ask(query, Provider::Brave, None, filters),
+        ask(query, Provider::Yahoo, None, filters),
+        ask(query, Provider::Duckduckgo, None, filters),
+    );
+    let mut answered: Vec<SearchResponse> = [brave, yahoo]
+        .into_iter()
+        .flatten()
+        .filter(|response| !response.results.is_empty())
+        .collect();
+    match duckduckgo {
+        Ok(response) if !response.results.is_empty() => answered.push(response),
+        // When the others have no answer, DuckDuckGo's answer or error is the one to act on.
+        other if answered.is_empty() => return other,
+        _ => {}
+    }
+    let engines = answered.iter().map(|response| response.provider).collect();
+    let lists = answered
+        .iter_mut()
+        .map(|response| std::mem::take(&mut response.results))
+        .collect();
+    let mut response = answered.swap_remove(0);
+    response.provider = Provider::Auto.name();
+    response.engines = engines;
+    response.results = fuse(lists);
+    Ok(response)
+}
+
+/// Merges result lists by reciprocal rank fusion: a page gets 1 / (60 + rank) from each list
+/// that has it, so pages that several engines rank high come first.
+fn fuse(lists: Vec<Vec<SearchHit>>) -> Vec<SearchHit> {
+    // The same page with or without https, www., a fragment or a final slash.
+    let key = |url: &str| {
+        let url = url.split('#').next().unwrap_or_default();
+        let url = url
+            .trim_start_matches("https://")
+            .trim_start_matches("http://");
+        url.trim_start_matches("www.")
+            .trim_end_matches('/')
+            .to_lowercase()
+    };
+    let mut merged: Vec<(f64, String, SearchHit)> = Vec::new();
+    for list in lists {
+        for (rank, hit) in list.into_iter().enumerate() {
+            let score = 1.0 / (61 + rank) as f64;
+            let page = key(&hit.url);
+            match merged.iter_mut().find(|(_, other, _)| *other == page) {
+                Some((total, _, _)) => *total += score,
+                None => merged.push((score, page, hit)),
+            }
         }
     }
-    // When the others have no answer, DuckDuckGo's answer or error is the one to act on.
-    ask(query, Provider::Duckduckgo, None, filters).await
+    merged.sort_by(|a, b| b.0.total_cmp(&a.0));
+    merged.into_iter().map(|(_, _, hit)| hit).collect()
 }
 
 async fn ask(
@@ -291,6 +339,7 @@ async fn ask(
         Ok(SearchResponse {
             query: query.to_owned(),
             provider: provider.name(),
+            engines: Vec::new(),
             status: response.status,
             source_url: response.url,
             retrieved_at: crate::retrieved_at(),
@@ -654,6 +703,29 @@ mod tests {
             [
                 ("q".into(), "rust example.com".into()),
                 ("df".into(), "m".into())
+            ]
+        );
+    }
+
+    #[test]
+    fn auto_merges_engines_and_ranks_shared_pages_first() {
+        let list = |urls: &[&str]| {
+            urls.iter()
+                .map(|url| SearchHit::new("t", *url, "s"))
+                .collect()
+        };
+        let merged = fuse(vec![
+            list(&["https://a.org/", "https://b.org/x", "https://c.org/"]),
+            list(&["https://d.org/", "http://www.c.org#top"]),
+        ]);
+        let urls: Vec<_> = merged.iter().map(|hit| &*hit.url).collect();
+        assert_eq!(
+            urls,
+            [
+                "https://c.org/",
+                "https://a.org/",
+                "https://d.org/",
+                "https://b.org/x"
             ]
         );
     }

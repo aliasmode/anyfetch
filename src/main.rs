@@ -16,7 +16,7 @@ enum Command {
     Mcp,
     /// Connect Anyfetch to the agent harnesses on this machine.
     Setup,
-    /// Search without an API key. The default provider tries Brave, then Yahoo, then DuckDuckGo.
+    /// Search without an API key. The default provider asks Brave, Yahoo and DuckDuckGo at once.
     Search {
         query: String,
         #[arg(long, value_enum, default_value_t = search::Provider::default())]
