@@ -195,9 +195,10 @@ anyfetch fetch https://stackoverflow.com/questions/231767 --format markdown
 anyfetch fetch https://arxiv.org/pdf/1706.03762 --max-chars 8000 --offset 8000
 anyfetch fetch https://docs.python.org/3.15/whatsnew/3.15.html --query "sampling profiler rate"
 anyfetch fetch https://www.rust-lang.org/ https://go.dev/ https://ziglang.org/
+anyfetch fetch https://news.ycombinator.com/ --content html --selector ".titleline > a"
 ```
 
-Output is JSON by default, so scripts and agents can parse it. `--format markdown` prints only the page content.
+Output is JSON by default, so scripts and agents can parse it. `--format markdown` prints only the page content. `--content` and `--selector` are the `format` and `selector` inputs of `web_fetch`; `search --read` takes them too.
 
 ## Tools
 
@@ -210,8 +211,10 @@ Output is JSON by default, so scripts and agents can parse it. `--format markdow
 | `max_chars` | Optional. The most content characters to return. The default is 50,000, or 5,000 with a `query`. |
 | `offset` | Optional. The first content character to return. Not used with a `query`. |
 | `fresh` | Optional. Fetch again even if a copy from the last 15 minutes exists. |
+| `format` | Optional. `readable` (default): the article as Markdown. `markdown`: the whole page as Markdown. `text`: plain text, a line per block, no links. `html`: the HTML as served, or as rendered when the page needs scripts and a renderer is installed. `json`: the body as JSON, from any content type, pretty-printed; `not_json` if it does not parse. |
+| `selector` | Optional. Keep only part of an HTML page: a CSS selector, all matches in page order (`readable` then gives Markdown). Ignored on pages that are not HTML: they come back whole. An empty string means not set. |
 
-The result has `title`, `description`, `content` (Markdown), `total_chars`, `url` (after redirects), `status` and `retrieved_at`. To read a long page in parts, call again with a higher `offset` until it reaches `total_chars`. The parts come from the local copy, so the site gets one request.
+The result has `title`, `description`, `content` (Markdown unless `format` says otherwise), `total_chars`, `url` (after redirects), `status` and `retrieved_at`. To read a long page in parts, call again with a higher `offset` until it reaches `total_chars`. The parts come from the local copy, so the site gets one request.
 
 With a `query`, the page is split at its paragraphs, tables and code blocks. The parts that best match the words of the query come back in page order, under their headings, with `[...]` where parts are left out. The result then has `focused: true`. A page with no matching part comes back from its start. A second question about the same page uses the local copy.
 
@@ -225,6 +228,7 @@ HTML becomes Markdown. A PDF becomes text with `[Page N]` marks. JSON, plain tex
 | `query` | Optional. As for `web_fetch`. Each page gives up to 5,000 characters. |
 | `max_chars` | Optional. The most content characters per page. By default the pages share 50,000. |
 | `fresh` | Optional. As for `web_fetch`. |
+| `format`, `selector` | Optional. As for `web_fetch`, for each page. |
 
 The result has `pages`: one entry per URL, in order. Each entry is the page, or its `error`.
 
@@ -238,6 +242,7 @@ The result has `pages`: one entry per URL, in order. Each entry is the page, or 
 | `time` | Optional. `day`, `week`, `month` or `year`. |
 | `page` | Optional. The result page, from 1. |
 | `read` | Optional. Also return, from this many top results, the parts of each page that match the query. |
+| `format`, `selector` | Optional. As for `web_fetch`, for the pages that `read` returns. |
 | `searxng_url` | The base URL of your SearXNG instance, for the `searxng` provider. It must have JSON output on. It may be on this machine or your network, such as `http://localhost:8888`, also without `ANYFETCH_ALLOW_PRIVATE=1`. |
 
 Each result has `title`, `url` and `snippet`, and `content` when you set `read`.
@@ -311,7 +316,7 @@ Notes:
 
 Most pages give Anyfetch their text without JavaScript: it is in the HTML, in the page's data, or behind a public API. A few hold nothing until their scripts run. MSN, Spotify and Airbnb are examples. For those, Anyfetch can use [Lightpanda](https://github.com/lightpanda-io/browser), a small headless engine without a full browser.
 
-Lightpanda is optional and separate. Install it from its README, put `lightpanda` on your `PATH`, and Anyfetch uses it for the pages that need it. In our test, MSN went from no content to 154,000 characters in 12 seconds, and Spotify from no content to 23,000 characters in 3 seconds. Pages that already work are not rendered, so they stay fast.
+Lightpanda is optional and separate. Install it from its README, put `lightpanda` on your `PATH`, and Anyfetch uses it for the pages that need it. In our test, MSN went from no content to 154,000 characters in 12 seconds, and Spotify from no content to 23,000 characters in 3 seconds. Pages that already work are not rendered, so they stay fast. When no renderer is installed, Anyfetch also skips the article extraction on the formats other than `readable`, since it is only needed to spot a page that is just scripts.
 
 | Setting | Effect |
 | --- | --- |

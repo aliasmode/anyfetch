@@ -1,4 +1,4 @@
-use anyfetch::fetch::fetch;
+use anyfetch::fetch::{self, fetch};
 use std::{
     io::{BufRead, BufReader, Write},
     net::TcpListener,
@@ -62,6 +62,65 @@ async fn decodes_http_and_html_charset_declarations() {
         assert!(!result.content.contains('\u{fffd}'));
         worker.join().unwrap();
     }
+}
+
+#[tokio::test]
+async fn returns_the_selected_html_and_json() {
+    let html = "<html><body><ul><li class=item>One</li><li>Skip</li><li class=item>Two</li></ul></body></html>";
+    let json = r#"{"items":[{"name":"a"},{"name":"b"}]}"#;
+    let (url, worker) = serve(vec![
+        format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{html}",
+            html.len()
+        ),
+        format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{json}",
+            json.len()
+        ),
+    ]);
+    let options = |format, selector| fetch::Options {
+        format,
+        selector,
+        ..fetch::Options::default()
+    };
+    let page = fetch::fetch_with(
+        &format!("{url}/list"),
+        options(fetch::Format::Html, Some("li.item")),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        page.content,
+        "<li class=\"item\">One</li>\n<li class=\"item\">Two</li>"
+    );
+    assert_eq!(page.content_type, "text/html");
+    let data = fetch::fetch_with(&format!("{url}/data"), options(fetch::Format::Json, None))
+        .await
+        .unwrap();
+    assert_eq!(data.content_type, "application/json");
+    let items: serde_json::Value = serde_json::from_str(&data.content).unwrap();
+    assert_eq!(
+        items,
+        serde_json::from_str::<serde_json::Value>(json).unwrap()
+    );
+    assert!(data.content.contains("\n  \"items\""));
+    worker.join().unwrap();
+}
+
+#[tokio::test]
+async fn a_selector_on_a_page_that_is_not_html_returns_the_whole_content() {
+    let text = "plain words, not a page";
+    let (url, worker) = serve(vec![format!(
+        "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{text}",
+        text.len()
+    )]);
+    let options = fetch::Options {
+        selector: Some("li.item"),
+        ..fetch::Options::default()
+    };
+    let page = fetch::fetch_with(&url, options).await.unwrap();
+    assert_eq!(page.content, text);
+    worker.join().unwrap();
 }
 
 #[tokio::test]

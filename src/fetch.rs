@@ -1,7 +1,9 @@
 use crate::{ToolError, alternates, cache, focus, pdf, render, transport};
-use dom_query::{Document, NodeRef};
+use clap::ValueEnum;
+use dom_query::{Document, Matcher, NodeRef};
 use dom_smoothie::Readability;
 use encoding_rs::{Encoding, UTF_8};
+use rmcp::schemars;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{
@@ -68,6 +70,27 @@ impl FetchResponse {
     }
 }
 
+/// What `content` holds.
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Deserialize, Serialize, ValueEnum, schemars::JsonSchema,
+)]
+#[serde(rename_all = "lowercase")]
+#[value(rename_all = "lower")]
+pub enum Format {
+    // Plain comments, as in search::Provider, keep the schema a list of names.
+    // The article as Markdown, or what a listing page shows.
+    #[default]
+    Readable,
+    // The whole page as Markdown.
+    Markdown,
+    // The words of the page, a line for each block, without Markdown or link targets.
+    Text,
+    // The HTML as served, or as rendered when the page needs scripts and a renderer is installed.
+    Html,
+    // The body parsed as JSON, pretty-printed.
+    Json,
+}
+
 #[derive(Clone, Copy, Default)]
 pub struct Options<'a> {
     /// A Firefox-based browser that passes Cloudflare checks which plain requests cannot. See
@@ -80,6 +103,9 @@ pub struct Options<'a> {
     pub cache: bool,
     /// Fetch the page again and replace the copy.
     pub fresh: bool,
+    pub format: Format,
+    /// A CSS selector for an HTML page: keep only what matches. Ignored on pages that are not HTML.
+    pub selector: Option<&'a str>,
 }
 
 /// The helper programs found on this machine.
@@ -97,14 +123,37 @@ impl Helpers {
     }
 
     /// Options for a fetch that uses the helpers and the page cache.
-    pub fn options(&self, fresh: bool) -> Options<'_> {
+    pub fn options<'a>(
+        &'a self,
+        fresh: bool,
+        format: Format,
+        selector: Option<&'a str>,
+    ) -> Options<'a> {
         Options {
             browser: self.browser.as_deref(),
             renderer: self.renderer.as_deref(),
             cache: true,
             fresh,
+            format,
+            selector,
         }
     }
+}
+
+/// An empty text is the same as none.
+pub fn non_empty(text: Option<&str>) -> Option<&str> {
+    text.filter(|text| !text.is_empty())
+}
+
+/// The cache key of a fetch: the plain URL for the default case, else a JSON list of everything
+/// that changes the processed content (JSON quoting keeps the parts from running together).
+fn cache_key(url: &str, options: &Options<'_>) -> String {
+    let readable = options.format == Format::Readable && options.selector.is_none();
+    if readable {
+        return url.to_owned();
+    }
+    let selector = non_empty(options.selector);
+    serde_json::to_string(&(url, options.format, selector)).expect("a key serializes")
 }
 
 pub async fn fetch(url: &str) -> Result<FetchResponse, ToolError> {
@@ -127,15 +176,17 @@ pub async fn fetch_with(url: &str, options: Options<'_>) -> Result<FetchResponse
 
 async fn fetch_cached(url: &str, options: Options<'_>) -> Result<FetchResponse, ToolError> {
     let cache = options.cache && transport::public_site(url);
+    // The copy holds processed content, so each format and selector needs a copy of its own.
+    let key = cache_key(url, &options);
     if cache
         && !options.fresh
-        && let Some(page) = cache::get(url)
+        && let Some(page) = cache::get(&key)
     {
         return Ok(page);
     }
     let page = download(url, options).await?;
     if cache {
-        cache::put(&page);
+        cache::put(&key, &page);
     }
     Ok(page)
 }
@@ -179,7 +230,10 @@ pub fn pages(
 }
 
 async fn download(url: &str, options: Options<'_>) -> Result<FetchResponse, ToolError> {
-    if let Ok(parsed) = url::Url::parse(url)
+    // Site APIs and site parsers give an article, not the page as served.
+    let readable = options.format == Format::Readable && options.selector.is_none();
+    if readable
+        && let Ok(parsed) = url::Url::parse(url)
         && let Some(page) = alternates::read(&parsed).await
     {
         return Ok(FetchResponse {
@@ -199,12 +253,20 @@ async fn download(url: &str, options: Options<'_>) -> Result<FetchResponse, Tool
     let response = transport::get_page(address, supported, options.browser).await?;
     let final_url = response.url;
     let status = response.status;
-    let content_type = response.content_type;
+    let mut content_type = response.content_type;
     let mime = content_type.parse::<mime::Mime>().ok();
     let media_type = mime.as_ref().map_or("", mime::Mime::essence_str);
     let is_html = matches!(media_type, "text/html" | "application/xhtml+xml");
     let bytes = response.bytes;
-    let (title, description, content) = if media_type == "application/pdf" {
+    // A selector only applies to HTML; any other body comes back whole.
+    let (title, description, content) = if options.format == Format::Json {
+        let value: serde_json::Value = serde_json::from_slice(&bytes).map_err(|error| {
+            ToolError::new("not_json", format!("The body is not JSON: {error}"))
+        })?;
+        let content = serde_json::to_string_pretty(&value).expect("a JSON value prints");
+        content_type = "application/json".to_owned();
+        (None, None, content)
+    } else if media_type == "application/pdf" {
         let parsed = tokio::task::spawn_blocking(move || pdf::read(&bytes)).await;
         let document = parsed
             .unwrap_or(Err("The PDF is damaged"))
@@ -222,19 +284,27 @@ async fn download(url: &str, options: Options<'_>) -> Result<FetchResponse, Tool
         }
         (document.title, None, content.join("\n\n"))
     } else {
-        let body = decode(&bytes, mime.as_ref(), is_html);
+        let mut body = decode(&bytes, mime.as_ref(), is_html);
         if is_html {
-            let own = alternates::parse(&final_url, &body).map(|page| Extracted {
-                title: page.title,
-                description: None,
-                content: page.content,
-                summary_only: false,
-            });
-            let mut extracted = own.map_or_else(|| extract(&body, &final_url), Ok);
+            let own = readable
+                .then(|| alternates::parse(&final_url, &body))
+                .flatten()
+                .map(|page| Extracted {
+                    title: page.title,
+                    description: None,
+                    content: page.content,
+                    summary_only: false,
+                });
+            // Readability is needed for the article, and to tell a page that is only scripts.
+            let detect = options.renderer.is_some();
+            let mut extracted =
+                (readable || detect).then(|| own.map_or_else(|| extract(&body, &final_url), Ok));
             // A page with no article and no data needs its scripts. Run them when a renderer
             // is installed; it makes its own request, so not behind a proxy. Only the page address
             // is checked: its scripts can still reach other hosts.
-            let shell = extracted.as_ref().map_or(true, |page| page.summary_only);
+            let shell = extracted
+                .as_ref()
+                .is_some_and(|plain| plain.as_ref().map_or(true, |page| page.summary_only));
             if shell && let Some(renderer) = options.renderer {
                 let allowed = transport::direct() && transport::resolves_public(&final_url).await;
                 let rendered = if allowed {
@@ -244,16 +314,30 @@ async fn download(url: &str, options: Options<'_>) -> Result<FetchResponse, Tool
                 };
                 if let Some(html) = rendered {
                     let page = extract_rendered(&html, &final_url);
-                    let plain = extracted.as_ref().map_or(0, |plain| plain.content.len());
+                    let plain = extracted
+                        .as_ref()
+                        .and_then(|plain| plain.as_ref().ok())
+                        .map_or(0, |plain| plain.content.len());
                     // A page that scripts did not fill stays as it was.
                     if let Some(page) = page
                         && page.content.len() > plain
                     {
-                        extracted = Ok(page);
+                        extracted = Some(Ok(page));
+                        body = Cow::Owned(html);
                     }
                 }
             }
-            let page = extracted?;
+            let page = if readable {
+                extracted.expect("a readable page is extracted")?
+            } else {
+                content_type = match options.format {
+                    Format::Html => "text/html",
+                    Format::Text => "text/plain",
+                    _ => "text/markdown",
+                }
+                .to_owned();
+                convert(&body, options.format, options.selector)?
+            };
             (Some(page.title), page.description, page.content)
         } else {
             (None, None, body.into_owned())
@@ -440,6 +524,142 @@ fn extract_rendered(html: &str, url: &str) -> Option<Extracted> {
             summary_only: false,
         }),
     }
+}
+
+/// Elements that a page does not show as text.
+const UNSHOWN: [&str; 6] = ["head", "script", "style", "meta", "noscript", "template"];
+
+/// A page in `format`, whole or only the elements that match the CSS `selector`, in page
+/// order. `Readable` with a selector gives Markdown: Readability on a fragment finds no article.
+fn convert(html: &str, format: Format, selector: Option<&str>) -> Result<Extracted, ToolError> {
+    let document = Document::from(html);
+    let title = document.select("title").text().trim().to_owned();
+    let description = description(&document);
+    let nodes = match selector {
+        Some(selector) => {
+            let matcher = Matcher::new(selector).map_err(|_| {
+                ToolError::new(
+                    "invalid_request",
+                    format!("Not a valid CSS selector: {selector}"),
+                )
+            })?;
+            let matches = document.select_matcher(&matcher);
+            let ids: HashSet<_> = matches.nodes().iter().map(|node| node.id).collect();
+            // A match inside another match is already part of it.
+            let outer: Vec<_> = matches
+                .nodes()
+                .iter()
+                .filter(|node| {
+                    !node
+                        .ancestors_it(None)
+                        .any(|parent| ids.contains(&parent.id))
+                })
+                .cloned()
+                .collect();
+            if outer.is_empty() {
+                let message = format!("No element matches the selector {selector}");
+                return Err(ToolError::new("no_match", message));
+            }
+            outer
+        }
+        None => vec![document.root()],
+    };
+    let parts = nodes.iter().map(|node| match format {
+        Format::Html if selector.is_none() => html.to_owned(),
+        Format::Html => node.html().to_string(),
+        Format::Text => plain_text(node),
+        // An element's Markdown leaves out its own markup, such as the # of a heading.
+        _ if selector.is_some() => {
+            let fragment = Document::from(node.html().as_ref());
+            fragment.md(Some(&UNSHOWN)).trim().to_owned()
+        }
+        _ => node.md(Some(&UNSHOWN)).trim().to_owned(),
+    });
+    let parts: Vec<_> = parts.filter(|part| !part.is_empty()).collect();
+    let separator = if format == Format::Text || format == Format::Html {
+        "\n"
+    } else {
+        "\n\n"
+    };
+    Ok(Extracted {
+        title,
+        description,
+        content: parts.join(separator),
+        summary_only: false,
+    })
+}
+
+/// The words under `node`, a line for each block, with runs of white space made one space.
+fn plain_text(node: &NodeRef) -> String {
+    fn walk(node: &NodeRef, text: &mut String) {
+        const BLOCKS: [&str; 33] = [
+            "address",
+            "article",
+            "aside",
+            "blockquote",
+            "dd",
+            "details",
+            "dialog",
+            "div",
+            "dl",
+            "dt",
+            "fieldset",
+            "figcaption",
+            "figure",
+            "footer",
+            "form",
+            "h1",
+            "h2",
+            "h3",
+            "h4",
+            "h5",
+            "h6",
+            "header",
+            "hr",
+            "li",
+            "main",
+            "nav",
+            "ol",
+            "p",
+            "pre",
+            "section",
+            "table",
+            "tr",
+            "ul",
+        ];
+        for child in node.children() {
+            if child.is_text() {
+                for letter in child.text().chars() {
+                    if !letter.is_whitespace() {
+                        text.push(letter);
+                    } else if !text.ends_with([' ', '\n']) {
+                        text.push(' ');
+                    }
+                }
+                continue;
+            }
+            let Some(name) = child.node_name() else {
+                continue;
+            };
+            if UNSHOWN.contains(&&*name) {
+                continue;
+            }
+            let block = BLOCKS.contains(&&*name);
+            if block || &*name == "br" {
+                text.push('\n');
+            }
+            walk(&child, text);
+            if block {
+                text.push('\n');
+            } else if matches!(&*name, "td" | "th") {
+                text.push(' ');
+            }
+        }
+    }
+    let mut text = String::new();
+    walk(node, &mut text);
+    let lines = text.lines().map(str::trim).filter(|line| !line.is_empty());
+    lines.collect::<Vec<_>>().join("\n")
 }
 
 /// What a home page or a listing shows, as Markdown: its headings, text and links in page
@@ -722,5 +942,88 @@ fn code_text(node: &NodeRef, text: &mut String, pending: &mut bool, in_line: boo
         } else if line {
             *pending = !text.ends_with('\n');
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const PAGE: &str = "<html><head><title>T</title><style>p{}</style></head><body>\
+        <h1>Head</h1><p class=a>One <a href=/x>link</a>\n   here</p>\
+        <script>var x = 1;</script><div class=a><p class=a>Two</p></div><p>Three</p>\
+        </body></html>";
+
+    #[test]
+    fn cache_keys_do_not_collide() {
+        let url = "https://example.com/a";
+        let with = |format, selector| Options {
+            format,
+            selector,
+            ..Options::default()
+        };
+        assert_eq!(cache_key(url, &Options::default()), url);
+        let one = cache_key(url, &with(Format::Text, Some("a\nb")));
+        let two = cache_key(url, &with(Format::Text, Some("a")));
+        assert_ne!(one, two);
+        // A selector holding what used to be the next part of the key.
+        let tricky = cache_key(url, &with(Format::Html, Some("x")));
+        let split = cache_key(
+            "https://example.com/a\nHtml",
+            &with(Format::Html, Some("x")),
+        );
+        assert_ne!(tricky, split);
+    }
+
+    #[test]
+    fn an_empty_selector_is_not_set() {
+        assert_eq!(non_empty(Some("")), None);
+        assert_eq!(non_empty(None), None);
+        assert_eq!(non_empty(Some("p")), Some("p"));
+    }
+
+    fn view(format: Format, selector: Option<&str>) -> Result<String, ToolError> {
+        convert(PAGE, format, selector).map(|page| page.content)
+    }
+
+    #[test]
+    fn converts_the_whole_page() {
+        let markdown = view(Format::Markdown, None).unwrap();
+        assert!(markdown.starts_with("# Head"), "{markdown}");
+        assert!(markdown.contains("[link](/x)"), "{markdown}");
+        assert!(!markdown.contains("var x"), "{markdown}");
+        assert_eq!(
+            view(Format::Text, None).unwrap(),
+            "Head\nOne link here\nTwo\nThree"
+        );
+        assert_eq!(view(Format::Html, None).unwrap(), PAGE);
+        assert_eq!(convert(PAGE, Format::Text, None).unwrap().title, "T");
+    }
+
+    #[test]
+    fn keeps_the_outer_matches_in_page_order() {
+        let html = view(Format::Html, Some(".a")).unwrap();
+        assert_eq!(
+            html,
+            "<p class=\"a\">One <a href=\"/x\">link</a>\n   here</p>\n\
+             <div class=\"a\"><p class=\"a\">Two</p></div>"
+        );
+        assert_eq!(
+            view(Format::Text, Some("p")).unwrap(),
+            "One link here\nTwo\nThree"
+        );
+        let markdown = view(Format::Markdown, Some("h1, p:last-child")).unwrap();
+        assert_eq!(markdown, "# Head\n\nTwo\n\nThree");
+        assert_eq!(view(Format::Readable, Some("h1")).unwrap(), "# Head");
+    }
+
+    #[test]
+    fn reports_a_selector_that_fails() {
+        assert_eq!(
+            view(Format::Html, Some("table")).unwrap_err().code,
+            "no_match"
+        );
+        let error = view(Format::Text, Some("p[")).unwrap_err();
+        assert_eq!(error.code, "invalid_request");
     }
 }

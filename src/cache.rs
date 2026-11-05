@@ -20,29 +20,30 @@ fn fresh(path: &Path) -> bool {
     modified.is_ok_and(|time| time.elapsed().is_ok_and(|age| age < LIFETIME))
 }
 
-pub(crate) fn get(url: &str) -> Option<FetchResponse> {
-    read(&directory()?, url)
+/// `key` is the URL, with the format and selector when the caller asked for them.
+pub(crate) fn get(key: &str) -> Option<FetchResponse> {
+    read(&directory()?, key)
 }
 
-pub(crate) fn put(page: &FetchResponse) {
+pub(crate) fn put(key: &str, page: &FetchResponse) {
     if let Some(directory) = directory() {
-        write(&directory, page);
+        write(&directory, key, page);
     }
 }
 
-fn file(directory: &Path, url: &str) -> PathBuf {
-    directory.join(format!("{}.json", crate::hex(&Sha256::digest(url))))
+fn file(directory: &Path, key: &str) -> PathBuf {
+    directory.join(format!("{}.json", crate::hex(&Sha256::digest(key))))
 }
 
-fn read(directory: &Path, url: &str) -> Option<FetchResponse> {
-    let path = file(directory, url);
+fn read(directory: &Path, key: &str) -> Option<FetchResponse> {
+    let path = file(directory, key);
     if !fresh(&path) {
         return None;
     }
     serde_json::from_slice(&std::fs::read(path).ok()?).ok()
 }
 
-fn write(directory: &Path, page: &FetchResponse) {
+fn write(directory: &Path, key: &str, page: &FetchResponse) {
     if std::fs::create_dir_all(directory).is_err() {
         return;
     }
@@ -52,7 +53,7 @@ fn write(directory: &Path, page: &FetchResponse) {
         }
     }
     if let Ok(json) = serde_json::to_vec(page) {
-        let _ = write_private(&file(directory, &page.requested_url), &json);
+        let _ = write_private(&file(directory, key), &json);
     }
 }
 
@@ -99,7 +100,7 @@ mod tests {
             focused: false,
             content: "hello".into(),
         };
-        write(&directory, &page);
+        write(&directory, "https://example.org/a", &page);
         assert_eq!(
             read(&directory, "https://example.org/a").unwrap().content,
             "hello"
