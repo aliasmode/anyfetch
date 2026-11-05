@@ -37,7 +37,7 @@ Sites: measured on 2026-10-12 with version 0.8.0. Questions: measured on 2026-10
 - **Answers, not whole pages.** Give a question with the URL, and get only the parts of the page that match it. The Python 3.15 release notes are 218,000 characters; the answer to one question about them came back in 2,200.
 - **Clean Markdown.** Links, tables and code blocks stay intact. Long pages come in parts.
 - **PDFs.** Papers and reports come back as text, page by page.
-- **Sites that need JavaScript.** Anyfetch reads the data inside the page, and uses the site's public API or feed for Stack Overflow, Reddit, IMDb, X posts, PyPI and crates.io. A Reddit thread comes with every comment and its score. No browser runs. For pages that hold nothing without their scripts, it can use Lightpanda, an optional small engine.
+- **Sites that need JavaScript.** Anyfetch reads the data inside the page, and uses the site's public API or feed for Stack Overflow, Reddit, IMDb, X posts, PyPI and crates.io. A Reddit thread comes with every comment and its score. No browser runs. For pages that hold nothing without their scripts, it can use Lightpanda, an optional small engine. YouTube transcripts need yt-dlp on your `PATH`.
 - **News and answers.** Full articles on Reuters and Bloomberg, the latest articles of The Economist, and the answers on Quora, from the data that these sites send.
 - **Home pages and listings.** A page with no single article comes back as its headlines and links, in page order.
 - **Browser-grade requests.** Safari's TLS, HTTP/2 and header fingerprint. A refused fetch is retried automatically, as the same browser or as a second one. Bot checks that are one fixed step, as on Reddit and Behance, are passed.
@@ -214,6 +214,7 @@ Output is JSON by default, so scripts and agents can parse it. `--format markdow
 | `fresh` | Optional. Fetch again even if a copy from the last 15 minutes exists. |
 | `format` | Optional. `readable` (default): the article as Markdown. `markdown`: the whole page as Markdown. `text`: plain text, a line per block, no links. `html`: the HTML as served, or as rendered when the page needs scripts and a renderer is installed. `json`: the body as JSON, from any content type, run through `jq .`; `not_json` if it does not parse. |
 | `selector` | Optional. Keep only part of the page. On HTML, a CSS selector: all matches in page order (`readable` then gives Markdown). On JSON, a jq program run by [jaq](https://github.com/01mf02/jaq): one result is returned as is, several as an array. Without `env`, `input` or `debug`. Limits: 15 seconds, 1 GB of memory, input nesting depth 256. Ignored on other pages that are not HTML: they come back whole. An empty string means not set. |
+| `lang` | Optional. Caption language for YouTube transcripts (yt-dlp is required), for example `en` (default) or `es`. An empty string means `en`. |
 
 The result has `title`, `description`, `content` (Markdown unless `format` says otherwise), `total_chars`, `url` (after redirects), `status` and `retrieved_at`. To read a long page in parts, call again with a higher `offset` until it reaches `total_chars`. The parts come from the local copy, so the site gets one request.
 
@@ -229,7 +230,7 @@ HTML becomes Markdown. A PDF becomes text with `[Page N]` marks. JSON, plain tex
 | `query` | Optional. As for `web_fetch`. Each page gives up to 5,000 characters. |
 | `max_chars` | Optional. The most content characters per page. By default the pages share 50,000. |
 | `fresh` | Optional. As for `web_fetch`. |
-| `format`, `selector` | Optional. As for `web_fetch`, for each page. |
+| `format`, `selector`, `lang` | Optional. As for `web_fetch`, for each page. |
 
 The result has `pages`: one entry per URL, in order. Each entry is the page, or its `error`.
 
@@ -328,6 +329,12 @@ Notes:
 
 - Lightpanda makes its own requests. It is not used together with a proxy, and a site with a bot check can refuse it.
 - A rendered application page, such as a feed or a listing, comes back as the whole page in Markdown.
+
+## YouTube
+
+A YouTube video URL (`watch?v=`, `youtu.be/`, `/shorts/`, also `m.` and `music.`) returns the transcript as Markdown: the title, the channel and length, then lines such as `[01:05] text`, each about 20 seconds long. Manual captions come before automatic ones. Set `lang` (`--lang` on the command line) for another language; use the full code, such as `pt-BR`, if the video has only that form.
+
+[yt-dlp](https://github.com/yt-dlp/yt-dlp) is required for YouTube transcripts. Put `yt-dlp` on your `PATH`. Without it, or if it fails, the error is `transcript_unavailable`. That code also means the video has no captions in that language.
 
 ## Use a proxy
 

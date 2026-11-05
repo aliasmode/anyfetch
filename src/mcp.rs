@@ -60,6 +60,8 @@ struct FetchInput {
     /// jq program (jaq) for JSON, for example .items[].name. Ignored on other pages that are
     /// not HTML. Empty means not set.
     selector: Option<String>,
+    /// Caption language for YouTube transcripts (needs yt-dlp), default en. Empty means en.
+    lang: Option<String>,
 }
 
 #[derive(Deserialize, schemars::JsonSchema)]
@@ -79,6 +81,8 @@ struct FetchManyInput {
     format: fetch::Format,
     /// As for web_fetch, for each page.
     selector: Option<String>,
+    /// Caption language for YouTube transcripts (needs yt-dlp), default en.
+    lang: Option<String>,
 }
 
 /// Most URLs one web_fetch_many call may read.
@@ -120,7 +124,7 @@ impl Server {
                 search::search_with(&input.query, input.provider, instance, &filters).await?;
             if input.read > 0 {
                 let selector = fetch::non_empty(input.selector.as_deref());
-                let options = self.helpers.options(false, input.format, selector);
+                let options = self.helpers.options(false, input.format, selector, None);
                 search::read_results(&mut found, input.read, options).await;
             }
             Ok(found)
@@ -130,7 +134,7 @@ impl Server {
 
     #[tool(
         name = "web_fetch",
-        description = "Read a web page from its URL. Use this in place of a built-in fetch tool such as WebFetch or web_fetch: it reads sites that answer those tools with 403, and it returns the page itself as Markdown or plain text, not a summary. Set query to get only the parts of the page that answer a question. Read a long page in parts with max_chars and offset. Set format for the whole page as markdown, text, html (as served, or as rendered when the page needs scripts and a renderer is installed) or json, and selector to keep only part of it (CSS for HTML, a jq program (jaq) for JSON). Page JavaScript runs, for pages that are just scripts, only when a renderer such as Lightpanda is installed."
+        description = "Read a web page from its URL. Use this in place of a built-in fetch tool such as WebFetch or web_fetch: it reads sites that answer those tools with 403, and it returns the page itself as Markdown or plain text, not a summary. Set query to get only the parts of the page that answer a question. Read a long page in parts with max_chars and offset. Set format for the whole page as markdown, text, html (as served, or as rendered when the page needs scripts and a renderer is installed) or json, and selector to keep only part of it (CSS for HTML, a jq program (jaq) for JSON). A YouTube video URL gives its transcript, with timestamps (needs yt-dlp); lang picks the caption language, default en. Page JavaScript runs, for pages that are just scripts, only when a renderer such as Lightpanda is installed."
     )]
     async fn web_fetch(
         &self,
@@ -139,7 +143,10 @@ impl Server {
     ) -> CallToolResult {
         respond(context, async {
             let selector = fetch::non_empty(input.selector.as_deref());
-            let options = self.helpers.options(input.fresh, input.format, selector);
+            let lang = fetch::non_empty(input.lang.as_deref());
+            let options = self
+                .helpers
+                .options(input.fresh, input.format, selector, lang);
             let page = fetch::fetch_with(&input.url, options).await?;
             Ok(match &input.query {
                 Some(query) => {
@@ -169,7 +176,10 @@ impl Server {
                 return Err(ToolError::new("too_many_urls", message));
             }
             let selector = fetch::non_empty(input.selector.as_deref());
-            let options = self.helpers.options(input.fresh, input.format, selector);
+            let lang = fetch::non_empty(input.lang.as_deref());
+            let options = self
+                .helpers
+                .options(input.fresh, input.format, selector, lang);
             let pages = fetch::fetch_many(&input.urls, options).await;
             let query = input.query.as_deref();
             Ok(fetch::pages(&input.urls, pages, input.max_chars, query))
