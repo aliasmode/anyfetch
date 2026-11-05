@@ -216,6 +216,8 @@ Output is JSON by default, so scripts and agents can parse it. `--format markdow
 | `selector` | Optional. Keep only part of the page. On HTML, a CSS selector: all matches in page order (`readable` then gives Markdown). On JSON, a jq program run by [jaq](https://github.com/01mf02/jaq): one result is returned as is, several as an array. Without `env`, `input` or `debug`. Limits: 15 seconds, 1 GB of memory, input nesting depth 256. Ignored on other pages that are not HTML: they come back whole. An empty string means not set. |
 | `render` | Optional. `"auto"` (default): run the page's scripts in the renderer only when the page is just scripts and a renderer is installed. `true`: render every HTML page; the error is `renderer_missing` if no renderer is installed, and `blocked_address` if the page is not public. `false`: never render. Applies to every `format`. On the command line: `--render true\|false\|auto`. |
 | `lang` | Optional. Caption language for YouTube transcripts (yt-dlp is required), for example `en` (default) or `es`. An empty string means `en`. |
+| `out` | Optional. Save the content to a file and get a preview: a path, or `true`. See [Saving to a file](#saving-to-a-file). |
+| `preview` | Optional, only with `out`. Which lines of the saved content come back: `true` (default, the first 20), `false`, `N`, `-N` or `[start, count]`. |
 
 The result has `title`, `description`, `content` (Markdown unless `format` says otherwise), `total_chars`, `url` (after redirects), `status` and `retrieved_at`. To read a long page in parts, call again with a higher `offset` until it reaches `total_chars`. The parts come from the local copy, so the site gets one request.
 
@@ -232,6 +234,7 @@ HTML becomes Markdown. A PDF becomes text with `[Page N]` marks. JSON, plain tex
 | `max_chars` | Optional. The most content characters per page. By default the pages share 50,000. |
 | `fresh` | Optional. As for `web_fetch`. |
 | `format`, `selector`, `render`, `lang` | Optional. As for `web_fetch`, for each page. |
+| `out`, `preview` | Optional. As for `web_fetch`. A path gets all pages in order; `true` gives each URL its own file. |
 
 The result has `pages`: one entry per URL, in order. Each entry is the page, or its `error`.
 
@@ -246,6 +249,7 @@ The result has `pages`: one entry per URL, in order. Each entry is the page, or 
 | `page` | Optional. The result page, from 1. |
 | `read` | Optional. Also return, from this many top results, the parts of each page that match the query. |
 | `format`, `selector`, `render` | Optional. As for `web_fetch`, for the pages that `read` returns. |
+| `out`, `preview` | Optional. Save the results and read pages as Markdown (`true`: `.anyfetch/search/<query>.md`). The answer keeps the results without their `content`; the preview is in `content`, and `saved` says where the file is. |
 | `searxng_url` | The base URL of your SearXNG instance, for the `searxng` provider. It must have JSON output on. It may be on this machine or your network, such as `http://localhost:8888`, also without `ANYFETCH_ALLOW_PRIVATE=1`. |
 
 Each result has `title`, `url` and `snippet`, and `content` when you set `read`.
@@ -264,6 +268,17 @@ Each result has `title`, `url` and `snippet`, and `content` when you set `read`.
 | `papers` | Research papers from OpenAlex, with citation counts and open-access links. |
 
 `site`, `time` and quoted phrases apply to the web engines. The specialist sources are free public APIs with their own request limits.
+
+### Saving to a file
+
+Set `out` (`--out` on the command line) to write the content to a file. You can then view, share or grep it later, and the model context gets only a preview.
+
+- A path is taken from the server's working directory. It must be in a subfolder of it, not the folder itself, also after links are followed, with no `..`. It must end in `.md`, `.txt`, `.html`, `.json` or `.jsonl`. `git check-ignore` must say it is ignored; outside a git repository, use `true`.
+- `true` picks `.anyfetch/<host>/<path>.<ext>`, with the extension from `format`. `.anyfetch/` gets a `.gitignore` of `*`. If the working directory is not writable, the file goes to the temporary directory.
+- An existing file is appended to, never cut. Each Markdown, text or HTML entry starts with `<!-- anyfetch: <url> <retrieved_at> -->`. JSON content is saved as JSON Lines: each entry is one compact line with no comment line. This holds for `.jsonl` (the automatic name for JSON content) and for an explicit `.json` path. The preview of JSON shows the pretty-printed content, so `preview_lines` counts the lines of that text, not of the file.
+- The answer keeps its other fields. `content` holds the preview, or is left out with `preview: false`. `saved` has `path`, `bytes_written`, `appended` and `preview_lines` (such as `1-20 of 340`). A preview stops at 50,000 characters.
+- `preview` is `true` (the first 20 lines), `false`, `N` (the first N lines), `-N` (the last N), or `[start, count]`: `count` lines from line `start`, counting from 1 (`[40, 20]` is lines 40-59; `--preview 40:20` on the command line).
+- A path that breaks these rules gives `invalid_request`; a failed write gives `write_failed`.
 
 ### Errors
 

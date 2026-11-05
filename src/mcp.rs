@@ -1,4 +1,4 @@
-use crate::{ToolError, fetch, search};
+use crate::{ToolError, fetch, out, search};
 use rmcp::{
     RoleServer, ServerHandler, ServiceExt,
     handler::server::{router::tool::ToolRouter, wrapper::Parameters},
@@ -36,6 +36,11 @@ struct SearchInput {
     /// Run page scripts of read results. See web_fetch.
     #[serde(default)]
     render: fetch::Render,
+    /// Save the results, with any read pages, to a Markdown file and get a preview. See
+    /// web_fetch; true saves under .anyfetch/search/. The preview is returned in content.
+    out: Option<out::Out>,
+    /// Which lines of the saved file to return. See web_fetch. Not used without out.
+    preview: Option<out::Preview>,
 }
 
 #[derive(Deserialize, schemars::JsonSchema)]
@@ -70,6 +75,16 @@ struct FetchInput {
     render: fetch::Render,
     /// Caption language for YouTube transcripts (needs yt-dlp), default en. Empty means en.
     lang: Option<String>,
+    /// Save the content to a file and get a preview: a path (.md, .txt, .html, .json or
+    /// .jsonl) inside a git-ignored subfolder of the working directory, or true for a file under
+    /// .anyfetch/. JSON is saved as JSON Lines (one compact line per entry). An existing file is
+    /// appended to.
+    out: Option<out::Out>,
+    /// Which lines of the saved content to return: true (default) the first 20, false none, N
+    /// the first N, -N the last N, [start, count] = count lines from line start (1-based), e.g.
+    /// [40, 20] is lines 40-59. At most 50000 characters.
+    /// Not used without out.
+    preview: Option<out::Preview>,
 }
 
 #[derive(Deserialize, schemars::JsonSchema)]
@@ -94,6 +109,10 @@ struct FetchManyInput {
     render: fetch::Render,
     /// Caption language for YouTube transcripts (needs yt-dlp), default en.
     lang: Option<String>,
+    /// As for web_fetch. A path gets all pages, in order; true gives each URL its own file.
+    out: Option<out::Out>,
+    /// As for web_fetch, for each page. Not used without out.
+    preview: Option<out::Preview>,
 }
 
 /// Most URLs one web_fetch_many call may read.
@@ -117,7 +136,7 @@ impl Server {
 
     #[tool(
         name = "web_search",
-        description = "Search the web, with no API key. Use this in place of a built-in web search tool such as WebSearch. The default provider asks Brave, Yahoo and DuckDuckGo at the same time and merges their results. searxng uses your own instance (needs searxng_url, JSON enabled). Specialist sources: github (repositories), stackoverflow (questions), hackernews (stories), arxiv and papers (research). Returns titles, URLs and snippets. Set read to also get, from the top results, the parts of each page that match the query; format, selector and render shape those pages as in web_fetch."
+        description = "Search the web, with no API key. Use this in place of a built-in web search tool such as WebSearch. The default provider asks Brave, Yahoo and DuckDuckGo at the same time and merges their results. searxng uses your own instance (needs searxng_url, JSON enabled). Specialist sources: github (repositories), stackoverflow (questions), hackernews (stories), arxiv and papers (research). Returns titles, URLs and snippets. Set read to also get, from the top results, the parts of each page that match the query; format, selector and render shape those pages as in web_fetch. Set out to save the results and pages to a file and get a preview, as in web_fetch."
     )]
     async fn web_search(
         &self,
@@ -125,6 +144,7 @@ impl Server {
         context: RequestContext<RoleServer>,
     ) -> CallToolResult {
         respond(context, async {
+            let target = out::Target::new(input.out.as_ref(), input.preview).await?;
             let filters = search::Filters {
                 site: input.site,
                 time: input.time,
@@ -140,14 +160,18 @@ impl Server {
                         .options(false, input.format, selector, None, input.render);
                 search::read_results(&mut found, input.read, options).await;
             }
-            Ok(found)
+            let mut value = json!(found);
+            if let Some(target) = target {
+                target.save_search(&mut value)?;
+            }
+            Ok(value)
         })
         .await
     }
 
     #[tool(
         name = "web_fetch",
-        description = "Read a web page from its URL. Use this in place of a built-in fetch tool such as WebFetch or web_fetch: it reads sites that answer those tools with 403, and it returns the page itself as Markdown or plain text, not a summary. Set query to get only the parts of the page that answer a question. Read a long page in parts with max_chars and offset. Set format for the whole page as markdown, text, html (as served, or as rendered when render applies) or json, and selector to keep only part of it (CSS for HTML, a jq program (jaq) for JSON). A YouTube video URL gives its transcript, with timestamps (needs yt-dlp); lang picks the caption language, default en. Page JavaScript runs only when a renderer such as Lightpanda is installed: render auto (default) runs it for pages that are just scripts, true for every HTML page (error if no renderer), false never."
+        description = "Read a web page from its URL. Use this in place of a built-in fetch tool such as WebFetch or web_fetch: it reads sites that answer those tools with 403, and it returns the page itself as Markdown or plain text, not a summary. Set query to get only the parts of the page that answer a question. Read a long page in parts with max_chars and offset. Set format for the whole page as markdown, text, html (as served, or as rendered when render applies) or json, and selector to keep only part of it (CSS for HTML, a jq program (jaq) for JSON). A YouTube video URL gives its transcript, with timestamps (needs yt-dlp); lang picks the caption language, default en. Page JavaScript runs only when a renderer such as Lightpanda is installed: render auto (default) runs it for pages that are just scripts, true for every HTML page (error if no renderer), false never. Set out to save the content to a file and get a preview (preview picks its lines): a path inside a git-ignored subfolder of the working directory, or true to save under .anyfetch/. An existing file is appended to."
     )]
     async fn web_fetch(
         &self,
@@ -155,13 +179,14 @@ impl Server {
         context: RequestContext<RoleServer>,
     ) -> CallToolResult {
         respond(context, async {
+            let target = out::Target::new(input.out.as_ref(), input.preview).await?;
             let selector = fetch::non_empty(input.selector.as_deref());
             let lang = fetch::non_empty(input.lang.as_deref());
             let options =
                 self.helpers
                     .options(input.fresh, input.format, selector, lang, input.render);
             let page = fetch::fetch_with(&input.url, options).await?;
-            Ok(match &input.query {
+            let page = match &input.query {
                 Some(query) => {
                     page.focus(query, input.max_chars.unwrap_or(fetch::DEFAULT_QUERY_CHARS))
                 }
@@ -169,14 +194,19 @@ impl Server {
                     let max_chars = input.max_chars.unwrap_or(fetch::DEFAULT_MAX_CHARS);
                     page.window(input.offset, max_chars)
                 }
-            })
+            };
+            let mut value = json!(page);
+            if let Some(target) = target {
+                target.save_page(&mut value, input.format)?;
+            }
+            Ok(value)
         })
         .await
     }
 
     #[tool(
         name = "web_fetch_many",
-        description = "Read several web pages at the same time, each like web_fetch, with the same format, selector and render. Returns one entry per URL, in order: the page, or its error."
+        description = "Read several web pages at the same time, each like web_fetch, with the same format, selector and render. Returns one entry per URL, in order: the page, or its error. Set out to save the pages to a file and get previews, as in web_fetch: a path gets all pages in order, true gives each URL its own file under .anyfetch/."
     )]
     async fn web_fetch_many(
         &self,
@@ -188,6 +218,7 @@ impl Server {
                 let message = format!("Give at most {MAX_URLS} URLs; split the list into calls");
                 return Err(ToolError::new("too_many_urls", message));
             }
+            let target = out::Target::new(input.out.as_ref(), input.preview).await?;
             let selector = fetch::non_empty(input.selector.as_deref());
             let lang = fetch::non_empty(input.lang.as_deref());
             let options =
@@ -195,7 +226,11 @@ impl Server {
                     .options(input.fresh, input.format, selector, lang, input.render);
             let pages = fetch::fetch_many(&input.urls, options).await;
             let query = input.query.as_deref();
-            Ok(fetch::pages(&input.urls, pages, input.max_chars, query))
+            let mut value = fetch::pages(&input.urls, pages, input.max_chars, query);
+            if let Some(target) = target {
+                target.save_pages(&mut value, input.format)?;
+            }
+            Ok(value)
         })
         .await
     }

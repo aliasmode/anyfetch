@@ -8,6 +8,7 @@ mod focus;
 #[doc(hidden)]
 pub mod jq;
 pub mod mcp;
+pub mod out;
 mod pdf;
 pub mod render;
 pub mod search;
