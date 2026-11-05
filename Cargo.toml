@@ -16,6 +16,9 @@ clap = { version = "4", features = ["derive"] }
 dom_query = { version = "=0.29", features = ["markdown"] }
 encoding_rs = "0.8"
 futures-util = { version = "0.3", default-features = false, features = ["alloc"] }
+jaq-core = "3.1"
+jaq-json = "2.0"
+jaq-std = "3.0"
 mime = "0.3"
 pdf-extract = "=0.12"
 dom_smoothie = "=0.19"
@@ -29,6 +32,13 @@ tokio = { version = "1", features = ["io-util", "macros", "net", "process", "rt-
 url = "2"
 wreq = { version = "=0.16", features = ["cookies", "charset", "stream", "gzip", "brotli", "deflate", "zstd"] }
 wreq-util = { version = "=0.2", features = ["emulation", "emulation-compression"] }
+
+# The jq child process limits its own memory.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading"] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["io-util", "net", "process", "time"] }

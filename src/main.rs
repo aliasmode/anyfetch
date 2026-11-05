@@ -55,7 +55,8 @@ enum Command {
         /// or json (pretty-printed).
         #[arg(long, value_enum, default_value_t = fetch::Format::default())]
         content: fetch::Format,
-        /// Keep only part of each page: a CSS selector, for HTML pages (ignored on pages that are not HTML).
+        /// Keep only part of each page: a CSS selector for HTML, or a jq program (jaq) for JSON.
+        /// Ignored on other pages that are not HTML.
         #[arg(long)]
         selector: Option<String>,
         /// A question or keywords: return only the parts of each page that match, 5000
@@ -81,8 +82,19 @@ enum Format {
     Markdown,
 }
 
+fn main() -> ExitCode {
+    // The hidden jq child limits its own memory before clap or tokio allocate anything.
+    if std::env::args_os()
+        .nth(1)
+        .is_some_and(|arg| arg == anyfetch::jq::CHILD_ARG)
+    {
+        return anyfetch::jq::child();
+    }
+    cli()
+}
+
 #[tokio::main]
-async fn main() -> ExitCode {
+async fn cli() -> ExitCode {
     let cli = Cli::parse();
     let markdown = matches!(
         cli.command,

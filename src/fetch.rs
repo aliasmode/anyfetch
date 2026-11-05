@@ -104,7 +104,8 @@ pub struct Options<'a> {
     /// Fetch the page again and replace the copy.
     pub fresh: bool,
     pub format: Format,
-    /// A CSS selector for an HTML page: keep only what matches. Ignored on pages that are not HTML.
+    /// A CSS selector for an HTML page, or a jq program (jaq) for JSON: keep only what matches.
+    /// Ignored on other pages that are not HTML.
     pub selector: Option<&'a str>,
 }
 
@@ -257,13 +258,15 @@ async fn download(url: &str, options: Options<'_>) -> Result<FetchResponse, Tool
     let mime = content_type.parse::<mime::Mime>().ok();
     let media_type = mime.as_ref().map_or("", mime::Mime::essence_str);
     let is_html = matches!(media_type, "text/html" | "application/xhtml+xml");
+    let is_json = media_type == "application/json" || media_type.ends_with("+json");
     let bytes = response.bytes;
-    // A selector only applies to HTML; any other body comes back whole.
-    let (title, description, content) = if options.format == Format::Json {
-        let value: serde_json::Value = serde_json::from_slice(&bytes).map_err(|error| {
-            ToolError::new("not_json", format!("The body is not JSON: {error}"))
-        })?;
-        let content = serde_json::to_string_pretty(&value).expect("a JSON value prints");
+    // A selector applies to HTML and JSON; any other body comes back whole.
+    let (title, description, content) = if options.format == Format::Json
+        || (is_json && options.selector.is_some())
+    {
+        let body = decode(&bytes, mime.as_ref(), is_html).into_owned();
+        let program = options.selector.unwrap_or(".");
+        let content = crate::jq::run(body, program.to_owned()).await?;
         content_type = "application/json".to_owned();
         (None, None, content)
     } else if media_type == "application/pdf" {

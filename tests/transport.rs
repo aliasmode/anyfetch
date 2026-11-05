@@ -80,12 +80,12 @@ async fn returns_the_selected_html_and_json() {
     ]);
     let options = |format, selector| fetch::Options {
         format,
-        selector,
+        selector: Some(selector),
         ..fetch::Options::default()
     };
     let page = fetch::fetch_with(
         &format!("{url}/list"),
-        options(fetch::Format::Html, Some("li.item")),
+        options(fetch::Format::Html, "li.item"),
     )
     .await
     .unwrap();
@@ -94,16 +94,15 @@ async fn returns_the_selected_html_and_json() {
         "<li class=\"item\">One</li>\n<li class=\"item\">Two</li>"
     );
     assert_eq!(page.content_type, "text/html");
-    let data = fetch::fetch_with(&format!("{url}/data"), options(fetch::Format::Json, None))
-        .await
-        .unwrap();
+    let data = fetch::fetch_with(
+        &format!("{url}/data"),
+        options(fetch::Format::Json, "[.items[].name]"),
+    )
+    .await
+    .unwrap();
     assert_eq!(data.content_type, "application/json");
-    let items: serde_json::Value = serde_json::from_str(&data.content).unwrap();
-    assert_eq!(
-        items,
-        serde_json::from_str::<serde_json::Value>(json).unwrap()
-    );
-    assert!(data.content.contains("\n  \"items\""));
+    let names: serde_json::Value = serde_json::from_str(&data.content).unwrap();
+    assert_eq!(names, serde_json::json!(["a", "b"]));
     worker.join().unwrap();
 }
 
