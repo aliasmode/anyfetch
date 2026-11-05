@@ -147,8 +147,15 @@ fn cursor(program: &str) -> Option<String> {
         return None;
     }
     let file = folder.join("mcp.json");
-    let current = std::fs::read_to_string(&file).unwrap_or_default();
-    let saved = with_server(&current, program).and_then(|config| std::fs::write(file, config).ok());
+    // Only a missing file counts as empty; an unreadable one must not be overwritten.
+    let current = match std::fs::read_to_string(&file) {
+        Ok(text) => Some(text),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Some(String::new()),
+        Err(_) => None,
+    };
+    let saved = current
+        .and_then(|current| with_server(&current, program))
+        .and_then(|config| std::fs::write(file, config).ok());
     Some(match saved {
         Some(()) => "connected".to_owned(),
         None => "failed: ~/.cursor/mcp.json could not be changed".to_owned(),

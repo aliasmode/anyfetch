@@ -136,7 +136,9 @@ pub(crate) async fn read(url: &Url) -> Option<Page> {
             let api = format!("https://crates.io/api/v1/crates/{name}");
             let package = json(&api).await?;
             let package = &package["crate"];
-            let version = package["max_stable_version"].as_str()?;
+            // A crate with only pre-releases has no stable version.
+            let stable = package["max_stable_version"].as_str();
+            let version = stable.or_else(|| package["max_version"].as_str())?;
             let readme = transport::get(&format!("{api}/{version}/readme"), |_| true).await;
             let readme = readme
                 .map(|body| markdown(&body.text()))

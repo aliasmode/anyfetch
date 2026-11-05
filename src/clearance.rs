@@ -111,7 +111,8 @@ pub(crate) async fn ensure(browser: &Path, url: &str) -> Result<Clearance, ToolE
         && let Some(directory) = path.parent()
         && std::fs::create_dir_all(directory).is_ok()
     {
-        let _ = std::fs::write(path, serde_json::to_vec(&clearance).unwrap_or_default());
+        let json = serde_json::to_vec(&clearance).unwrap_or_default();
+        let _ = crate::cache::write_private(&path, &json);
     }
     Ok(clearance)
 }
@@ -158,7 +159,8 @@ pub async fn obtain(browser: &Path, url: &str) -> Result<Clearance, ToolError> {
         .spawn()
         .map_err(|_| failed("Could not start the browser"))?;
     let pass = async {
-        let user_agent = redirect(&listener, url).await?;
+        // The parsed form, since `Url::parse` drops the CR/LF a raw string could inject.
+        let user_agent = redirect(&listener, target.as_str()).await?;
         loop {
             sleep(Duration::from_secs(1)).await;
             let (cookies, expires) = read_cookies(&scratch.0, host);
