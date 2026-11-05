@@ -42,6 +42,9 @@ enum Command {
         /// Keep only part of the pages of read results, as for fetch.
         #[arg(long)]
         selector: Option<String>,
+        /// Run page scripts of read results, as for fetch.
+        #[arg(long, default_value = "auto", value_name = "true|false|auto")]
+        render: fetch::Render,
     },
     /// Fetch one or more pages: their readable content, or the page as Markdown, text, HTML or JSON.
     Fetch {
@@ -51,7 +54,7 @@ enum Command {
         #[arg(long, value_enum, default_value_t = Format::Json)]
         format: Format,
         /// What the content holds: readable (the article as Markdown), markdown (the whole page),
-        /// text (no Markdown, no links), html (as served, or as rendered when the page needs scripts and a renderer is installed)
+        /// text (no Markdown, no links), html (as served, or as rendered when --render applies)
         /// or json (pretty-printed).
         #[arg(long, value_enum, default_value_t = fetch::Format::default())]
         content: fetch::Format,
@@ -59,6 +62,10 @@ enum Command {
         /// Ignored on other pages that are not HTML.
         #[arg(long)]
         selector: Option<String>,
+        /// Run page scripts in the renderer: auto (a page that is just scripts, if a renderer is
+        /// installed), true (every HTML page; an error without a renderer) or false (never).
+        #[arg(long, default_value = "auto", value_name = "true|false|auto")]
+        render: fetch::Render,
         /// A question or keywords: return only the parts of each page that match, 5000
         /// characters by default.
         #[arg(long)]
@@ -130,6 +137,7 @@ async fn cli() -> ExitCode {
             read,
             content,
             selector,
+            render,
         } => {
             let filters = search::Filters { site, time, page };
             let instance = searxng_url.as_deref();
@@ -139,7 +147,7 @@ async fn cli() -> ExitCode {
             {
                 let helpers = fetch::Helpers::find();
                 let selector = fetch::non_empty(selector.as_deref());
-                let options = helpers.options(false, content, selector, None);
+                let options = helpers.options(false, content, selector, None, render);
                 search::read_results(found, read, options).await;
             }
             found.map(|value| json!(value))
@@ -152,13 +160,14 @@ async fn cli() -> ExitCode {
             fresh,
             content,
             selector,
+            render,
             lang,
             ..
         } => {
             let helpers = fetch::Helpers::find();
             let selector = fetch::non_empty(selector.as_deref());
             let lang = fetch::non_empty(lang.as_deref());
-            let options = helpers.options(fresh, content, selector, lang);
+            let options = helpers.options(fresh, content, selector, lang, render);
             if let ([url], Some(query)) = (urls.as_slice(), &query) {
                 let max_chars = max_chars.unwrap_or(fetch::DEFAULT_QUERY_CHARS);
                 let page = fetch::fetch_with(url, options).await;
