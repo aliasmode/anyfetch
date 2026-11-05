@@ -37,7 +37,7 @@ Sites: measured on 2026-10-12 with version 0.8.0. Questions: measured on 2026-10
 - **Answers, not whole pages.** Give a question with the URL, and get only the parts of the page that match it. The Python 3.15 release notes are 218,000 characters; the answer to one question about them came back in 2,200.
 - **Clean Markdown.** Links, tables and code blocks stay intact. Long pages come in parts.
 - **PDFs.** Papers and reports come back as text, page by page.
-- **Sites that need JavaScript.** Anyfetch reads the data inside the page, and uses the site's public API or feed for Stack Overflow, Reddit, IMDb, X posts, PyPI and crates.io. A Reddit thread comes with every comment and its score. No browser runs. For pages that hold nothing without their scripts, it can use Lightpanda, an optional small engine.
+- **Sites that need JavaScript.** Anyfetch reads the data inside the page, and uses the site's public API or feed for Stack Overflow, Reddit, IMDb, X posts, PyPI and crates.io. A Reddit thread comes with every comment and its score. No browser runs. For pages that hold nothing without their scripts, it can use Lightpanda, an optional small engine. YouTube transcripts need yt-dlp on your `PATH`.
 - **News and answers.** Full articles on Reuters and Bloomberg, the latest articles of The Economist, and the answers on Quora, from the data that these sites send.
 - **Home pages and listings.** A page with no single article comes back as its headlines and links, in page order.
 - **Browser-grade requests.** Safari's TLS, HTTP/2 and header fingerprint. A refused fetch is retried automatically, as the same browser or as a second one. Bot checks that are one fixed step, as on Reddit and Behance, are passed.
@@ -195,9 +195,11 @@ anyfetch fetch https://stackoverflow.com/questions/231767 --format markdown
 anyfetch fetch https://arxiv.org/pdf/1706.03762 --max-chars 8000 --offset 8000
 anyfetch fetch https://docs.python.org/3.15/whatsnew/3.15.html --query "sampling profiler rate"
 anyfetch fetch https://www.rust-lang.org/ https://go.dev/ https://ziglang.org/
+anyfetch fetch https://news.ycombinator.com/ --content html --selector ".titleline > a"
+anyfetch fetch https://api.github.com/repos/rust-lang/rust --selector "{name, stars: .stargazers_count}"
 ```
 
-Output is JSON by default, so scripts and agents can parse it. `--format markdown` prints only the page content.
+Output is JSON by default, so scripts and agents can parse it. `--format markdown` prints only the page content. `--content`, `--selector` and `--render` are the `format`, `selector` and `render` inputs of `web_fetch`; `search --read` takes them too.
 
 ## Tools
 
@@ -210,8 +212,14 @@ Output is JSON by default, so scripts and agents can parse it. `--format markdow
 | `max_chars` | Optional. The most content characters to return. The default is 50,000, or 5,000 with a `query`. |
 | `offset` | Optional. The first content character to return. Not used with a `query`. |
 | `fresh` | Optional. Fetch again even if a copy from the last 15 minutes exists. |
+| `format` | Optional. `readable` (default): the article as Markdown. `markdown`: the whole page as Markdown. `text`: plain text, a line per block, no links. `html`: the HTML as served, or as rendered when `render` applies. `json`: the body as JSON, from any content type, run through `jq .`; `not_json` if it does not parse. |
+| `selector` | Optional. Keep only part of the page. On HTML, a CSS selector: all matches in page order (`readable` then gives Markdown). On JSON, a jq program run by [jaq](https://github.com/01mf02/jaq): one result is returned as is, several as an array. Without `env`, `input` or `debug`. Limits: 15 seconds, 1 GB of memory, input nesting depth 256. Ignored on other pages that are not HTML: they come back whole. An empty string means not set. |
+| `render` | Optional. `"auto"` (default): run the page's scripts in the renderer only when the page is just scripts and a renderer is installed. `true`: render every HTML page; the error is `renderer_missing` if no renderer is installed, and `blocked_address` if the page is not public. `false`: never render. Applies to every `format`. On the command line: `--render true\|false\|auto`. |
+| `lang` | Optional. Caption language for YouTube transcripts (yt-dlp is required), for example `en` (default) or `es`. An empty string means `en`. |
+| `out` | Optional. Save the content to a file and get a preview: a path, or `true`. See [Saving to a file](#saving-to-a-file). |
+| `preview` | Optional, only with `out`. Which lines of the saved content come back: `true` (default, the first 20), `false`, `N`, `-N` or `[start, count]`. |
 
-The result has `title`, `description`, `content` (Markdown), `total_chars`, `url` (after redirects), `status` and `retrieved_at`. To read a long page in parts, call again with a higher `offset` until it reaches `total_chars`. The parts come from the local copy, so the site gets one request.
+The result has `title`, `description`, `content` (Markdown unless `format` says otherwise), `total_chars`, `url` (after redirects), `status` and `retrieved_at`. To read a long page in parts, call again with a higher `offset` until it reaches `total_chars`. The parts come from the local copy, so the site gets one request.
 
 With a `query`, the page is split at its paragraphs, tables and code blocks. The parts that best match the words of the query come back in page order, under their headings, with `[...]` where parts are left out. The result then has `focused: true`. A page with no matching part comes back from its start. A second question about the same page uses the local copy.
 
@@ -225,6 +233,8 @@ HTML becomes Markdown. A PDF becomes text with `[Page N]` marks. JSON, plain tex
 | `query` | Optional. As for `web_fetch`. Each page gives up to 5,000 characters. |
 | `max_chars` | Optional. The most content characters per page. By default the pages share 50,000. |
 | `fresh` | Optional. As for `web_fetch`. |
+| `format`, `selector`, `render`, `lang` | Optional. As for `web_fetch`, for each page. |
+| `out`, `preview` | Optional. As for `web_fetch`. A path gets all pages in order; `true` gives each URL its own file. |
 
 The result has `pages`: one entry per URL, in order. Each entry is the page, or its `error`.
 
@@ -238,7 +248,9 @@ The result has `pages`: one entry per URL, in order. Each entry is the page, or 
 | `time` | Optional. `day`, `week`, `month` or `year`. |
 | `page` | Optional. The result page, from 1. |
 | `read` | Optional. Also return, from this many top results, the parts of each page that match the query. |
-| `searxng_url` | The base URL of your SearXNG instance, for the `searxng` provider. It must have JSON output on. |
+| `format`, `selector`, `render` | Optional. As for `web_fetch`, for the pages that `read` returns. |
+| `out`, `preview` | Optional. Save the results and read pages as Markdown (`true`: `.anyfetch/search/<query>.md`). The answer keeps the results without their `content`; the preview is in `content`, and `saved` says where the file is. |
+| `searxng_url` | The base URL of your SearXNG instance, for the `searxng` provider. It must have JSON output on. It may be on this machine or your network, such as `http://localhost:8888`, also without `ANYFETCH_ALLOW_PRIVATE=1`. |
 
 Each result has `title`, `url` and `snippet`, and `content` when you set `read`.
 
@@ -257,6 +269,17 @@ Each result has `title`, `url` and `snippet`, and `content` when you set `read`.
 
 `site`, `time` and quoted phrases apply to the web engines. The specialist sources are free public APIs with their own request limits.
 
+### Saving to a file
+
+Set `out` (`--out` on the command line) to write the content to a file. You can then view, share or grep it later, and the model context gets only a preview.
+
+- A path is taken from the server's working directory. It must be in a subfolder of it, not the folder itself, also after links are followed, with no `..`. It must end in `.md`, `.txt`, `.html`, `.json` or `.jsonl`. `git check-ignore` must say it is ignored; outside a git repository, use `true`.
+- `true` picks `.anyfetch/<host>/<path>.<ext>`, with the extension from `format`. `.anyfetch/` gets a `.gitignore` of `*`. If the working directory is not writable, the file goes to the temporary directory.
+- An existing file is appended to, never cut. Each Markdown, text or HTML entry starts with `<!-- anyfetch: <url> <retrieved_at> -->`. JSON content is saved as JSON Lines: each entry is one compact line with no comment line. This holds for `.jsonl` (the automatic name for JSON content) and for an explicit `.json` path. The preview of JSON shows the pretty-printed content, so `preview_lines` counts the lines of that text, not of the file.
+- The answer keeps its other fields. `content` holds the preview, or is left out with `preview: false`. `saved` has `path`, `bytes_written`, `appended` and `preview_lines` (such as `1-20 of 340`). A preview stops at 50,000 characters.
+- `preview` is `true` (the first 20 lines), `false`, `N` (the first N lines), `-N` (the last N), or `[start, count]`: `count` lines from line `start`, counting from 1 (`[40, 20]` is lines 40-59; `--preview 40:20` on the command line).
+- A path that breaks these rules gives `invalid_request`; a failed write gives `write_failed`.
+
 ### Errors
 
 A failed call returns an `error` object with a `code` the agent can act on:
@@ -269,6 +292,15 @@ A failed call returns an `error` object with a `code` the agent can act on:
 | `timeout` | The site did not answer within 30 seconds. |
 | `unsupported_content` | The URL is not text or a PDF (an image, for example). |
 | `extraction_failed` | The page has no readable content. A scanned PDF has no text. |
+| `blocked_address` | The URL, a redirect or the name's address leads to a link-local or cloud metadata address, or to a local or private network without `ANYFETCH_ALLOW_PRIVATE=1`. |
+
+### Local addresses
+
+By default, `web_fetch` reads only public sites. It refuses this machine (`localhost`, `127.0.0.1`) and private networks (`10.x`, `192.168.x` and similar), also when a public name or a redirect leads there. It always refuses link-local and cloud metadata addresses, such as `169.254.169.254`. The Cloudflare browser and the JavaScript renderer open only public sites.
+
+| Setting | Effect |
+| --- | --- |
+| `ANYFETCH_ALLOW_PRIVATE=1` | Also allows this machine and private networks. Link-local and cloud metadata addresses stay blocked. A SearXNG instance may be local or private without it. |
 
 ## Cloudflare checks
 
@@ -302,7 +334,7 @@ Notes:
 
 Most pages give Anyfetch their text without JavaScript: it is in the HTML, in the page's data, or behind a public API. A few hold nothing until their scripts run. MSN, Spotify and Airbnb are examples. For those, Anyfetch can use [Lightpanda](https://github.com/lightpanda-io/browser), a small headless engine without a full browser.
 
-Lightpanda is optional and separate. Install it from its README, put `lightpanda` on your `PATH`, and Anyfetch uses it for the pages that need it. In our test, MSN went from no content to 154,000 characters in 12 seconds, and Spotify from no content to 23,000 characters in 3 seconds. Pages that already work are not rendered, so they stay fast.
+Lightpanda is optional and separate. Install it from its README, put `lightpanda` on your `PATH`, and Anyfetch uses it for the pages that need it. In our test, MSN went from no content to 154,000 characters in 12 seconds, and Spotify from no content to 23,000 characters in 3 seconds. By default (`render` is `auto`), pages that already work are not rendered, so they stay fast. Set `render` to `true` to render every HTML page, or to `false` to never render. With `false`, or when no renderer is installed, Anyfetch also skips the article extraction on the formats other than `readable`, since it is only needed to spot a page that is just scripts.
 
 | Setting | Effect |
 | --- | --- |
@@ -313,6 +345,12 @@ Notes:
 
 - Lightpanda makes its own requests. It is not used together with a proxy, and a site with a bot check can refuse it.
 - A rendered application page, such as a feed or a listing, comes back as the whole page in Markdown.
+
+## YouTube
+
+A YouTube video URL (`watch?v=`, `youtu.be/`, `/shorts/`, also `m.` and `music.`) returns the transcript as Markdown: the title, the channel and length, then lines such as `[01:05] text`, each about 20 seconds long. Manual captions come before automatic ones. Set `lang` (`--lang` on the command line) for another language; use the full code, such as `pt-BR`, if the video has only that form.
+
+[yt-dlp](https://github.com/yt-dlp/yt-dlp) is required for YouTube transcripts. Put `yt-dlp` on your `PATH`. Without it, or if it fails, the error is `transcript_unavailable`. That code also means the video has no captions in that language.
 
 ## Use a proxy
 

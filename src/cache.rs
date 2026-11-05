@@ -4,6 +4,7 @@ use crate::fetch::FetchResponse;
 use sha2::{Digest, Sha256};
 use std::{
     path::{Path, PathBuf},
+    sync::atomic::{AtomicU64, Ordering},
     time::Duration,
 };
 
@@ -19,29 +20,30 @@ fn fresh(path: &Path) -> bool {
     modified.is_ok_and(|time| time.elapsed().is_ok_and(|age| age < LIFETIME))
 }
 
-pub(crate) fn get(url: &str) -> Option<FetchResponse> {
-    read(&directory()?, url)
+/// `key` is the URL, with the format and selector when the caller asked for them.
+pub(crate) fn get(key: &str) -> Option<FetchResponse> {
+    read(&directory()?, key)
 }
 
-pub(crate) fn put(page: &FetchResponse) {
+pub(crate) fn put(key: &str, page: &FetchResponse) {
     if let Some(directory) = directory() {
-        write(&directory, page);
+        write(&directory, key, page);
     }
 }
 
-fn file(directory: &Path, url: &str) -> PathBuf {
-    directory.join(format!("{:x}.json", Sha256::digest(url)))
+fn file(directory: &Path, key: &str) -> PathBuf {
+    directory.join(format!("{}.json", crate::hex(&Sha256::digest(key))))
 }
 
-fn read(directory: &Path, url: &str) -> Option<FetchResponse> {
-    let path = file(directory, url);
+fn read(directory: &Path, key: &str) -> Option<FetchResponse> {
+    let path = file(directory, key);
     if !fresh(&path) {
         return None;
     }
     serde_json::from_slice(&std::fs::read(path).ok()?).ok()
 }
 
-fn write(directory: &Path, page: &FetchResponse) {
+fn write(directory: &Path, key: &str, page: &FetchResponse) {
     if std::fs::create_dir_all(directory).is_err() {
         return;
     }
@@ -51,8 +53,31 @@ fn write(directory: &Path, page: &FetchResponse) {
         }
     }
     if let Ok(json) = serde_json::to_vec(page) {
-        let _ = std::fs::write(file(directory, &page.requested_url), json);
+        let _ = write_private(&file(directory, key), &json);
     }
+}
+
+/// Writes `bytes` to `path` readable by the owner only (on Unix). A temporary file and a rename
+/// keep concurrent readers from seeing a partial file.
+pub(crate) fn write_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    // The counter separates parallel writes from this process.
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let unique = NEXT.fetch_add(1, Ordering::Relaxed);
+    let mut name = path.as_os_str().to_owned();
+    name.push(format!(".{}-{unique}.tmp", std::process::id()));
+    let temporary = PathBuf::from(name);
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+    let written = options
+        .open(&temporary)
+        .and_then(|mut file| std::io::Write::write_all(&mut file, bytes))
+        .and_then(|()| std::fs::rename(&temporary, path));
+    if written.is_err() {
+        let _ = std::fs::remove_file(&temporary);
+    }
+    written
 }
 
 #[cfg(test)]
@@ -75,7 +100,7 @@ mod tests {
             focused: false,
             content: "hello".into(),
         };
-        write(&directory, &page);
+        write(&directory, "https://example.org/a", &page);
         assert_eq!(
             read(&directory, "https://example.org/a").unwrap().content,
             "hello"

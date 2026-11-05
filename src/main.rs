@@ -1,4 +1,4 @@
-use anyfetch::{fetch, search};
+use anyfetch::{fetch, out, search};
 use clap::{Parser, Subcommand, ValueEnum};
 use serde_json::json;
 use std::{io::Write, process::ExitCode};
@@ -36,13 +36,43 @@ enum Command {
         /// Also return, from this many top results, the parts of each page that match the query.
         #[arg(long, default_value_t = 0)]
         read: usize,
+        /// What the content of read results holds, as for fetch.
+        #[arg(long, value_enum, default_value_t = fetch::Format::default())]
+        content: fetch::Format,
+        /// Keep only part of the pages of read results, as for fetch.
+        #[arg(long)]
+        selector: Option<String>,
+        /// Run page scripts of read results, as for fetch.
+        #[arg(long, default_value = "auto", value_name = "true|false|auto")]
+        render: fetch::Render,
+        /// Save the results and read pages to a Markdown file, as for fetch; true saves under
+        /// .anyfetch/search/.
+        #[arg(long, value_name = "PATH|true")]
+        out: Option<out::Out>,
+        /// Which lines of the saved file to print, as for fetch.
+        #[arg(long, value_name = "true|false|N|-N|START:COUNT")]
+        preview: Option<out::Preview>,
     },
-    /// Fetch one or more pages and extract their readable content.
+    /// Fetch one or more pages: their readable content, or the page as Markdown, text, HTML or JSON.
     Fetch {
         #[arg(required = true, value_name = "URL")]
         urls: Vec<String>,
+        /// How to print the answer: the JSON result, or only the page content.
         #[arg(long, value_enum, default_value_t = Format::Json)]
         format: Format,
+        /// What the content holds: readable (the article as Markdown), markdown (the whole page),
+        /// text (no Markdown, no links), html (as served, or as rendered when --render applies)
+        /// or json (pretty-printed).
+        #[arg(long, value_enum, default_value_t = fetch::Format::default())]
+        content: fetch::Format,
+        /// Keep only part of each page: a CSS selector for HTML, or a jq program (jaq) for JSON.
+        /// Ignored on other pages that are not HTML.
+        #[arg(long)]
+        selector: Option<String>,
+        /// Run page scripts in the renderer: auto (a page that is just scripts, if a renderer is
+        /// installed), true (every HTML page; an error without a renderer) or false (never).
+        #[arg(long, default_value = "auto", value_name = "true|false|auto")]
+        render: fetch::Render,
         /// A question or keywords: return only the parts of each page that match, 5000
         /// characters by default.
         #[arg(long)]
@@ -57,6 +87,18 @@ enum Command {
         /// Fetch again even if a copy from the last 15 minutes exists.
         #[arg(long)]
         fresh: bool,
+        /// Caption language for YouTube transcripts (needs yt-dlp), such as en or es. Default en.
+        #[arg(long)]
+        lang: Option<String>,
+        /// Save the content to a file and print a preview: a path (.md, .txt, .html or .json)
+        /// inside a git-ignored subfolder of the working directory, or true for a file under
+        /// .anyfetch/. An existing file is appended to; several URLs go to one path in order.
+        #[arg(long, value_name = "PATH|true")]
+        out: Option<out::Out>,
+        /// Which lines of the saved content to print: true (20 lines), false, N (first N), -N
+        /// (last N) or START:COUNT. Only with --out.
+        #[arg(long, value_name = "true|false|N|-N|START:COUNT")]
+        preview: Option<out::Preview>,
     },
 }
 
@@ -66,8 +108,19 @@ enum Format {
     Markdown,
 }
 
+fn main() -> ExitCode {
+    // The hidden jq child limits its own memory before clap or tokio allocate anything.
+    if std::env::args_os()
+        .nth(1)
+        .is_some_and(|arg| arg == anyfetch::jq::CHILD_ARG)
+    {
+        return anyfetch::jq::child();
+    }
+    cli()
+}
+
 #[tokio::main]
-async fn main() -> ExitCode {
+async fn cli() -> ExitCode {
     let cli = Cli::parse();
     let markdown = matches!(
         cli.command,
@@ -98,17 +151,30 @@ async fn main() -> ExitCode {
             time,
             page,
             read,
+            content,
+            selector,
+            render,
+            out,
+            preview,
         } => {
-            let filters = search::Filters { site, time, page };
-            let instance = searxng_url.as_deref();
-            let mut found = search::search_with(&query, provider, instance, &filters).await;
-            if read > 0
-                && let Ok(found) = &mut found
-            {
-                let helpers = fetch::Helpers::find();
-                search::read_results(found, read, helpers.options(false)).await;
+            async {
+                let target = out::Target::new(out.as_ref(), preview).await?;
+                let filters = search::Filters { site, time, page };
+                let instance = searxng_url.as_deref();
+                let mut found = search::search_with(&query, provider, instance, &filters).await?;
+                if read > 0 {
+                    let helpers = fetch::Helpers::find();
+                    let selector = fetch::non_empty(selector.as_deref());
+                    let options = helpers.options(false, content, selector, None, render);
+                    search::read_results(&mut found, read, options).await;
+                }
+                let mut value = json!(found);
+                if let Some(target) = target {
+                    target.save_search(&mut value)?;
+                }
+                Ok::<_, anyfetch::ToolError>(value)
             }
-            found.map(|value| json!(value))
+            .await
         }
         Command::Fetch {
             urls,
@@ -116,31 +182,49 @@ async fn main() -> ExitCode {
             offset,
             max_chars,
             fresh,
+            content,
+            selector,
+            render,
+            lang,
+            out,
+            preview,
             ..
         } => {
-            let helpers = fetch::Helpers::find();
-            let options = helpers.options(fresh);
-            if let ([url], Some(query)) = (urls.as_slice(), &query) {
-                let max_chars = max_chars.unwrap_or(fetch::DEFAULT_QUERY_CHARS);
-                let page = fetch::fetch_with(url, options).await;
-                page.map(|page| json!(page.focus(query, max_chars)))
-            } else if let [url] = urls.as_slice() {
-                let max_chars = max_chars.unwrap_or(fetch::DEFAULT_MAX_CHARS);
-                let page = fetch::fetch_with(url, options).await;
-                page.map(|page| {
+            async {
+                let target = out::Target::new(out.as_ref(), preview).await?;
+                let helpers = fetch::Helpers::find();
+                let selector = fetch::non_empty(selector.as_deref());
+                let lang = fetch::non_empty(lang.as_deref());
+                let options = helpers.options(fresh, content, selector, lang, render);
+                let mut value = if let ([url], Some(query)) = (urls.as_slice(), &query) {
+                    let max_chars = max_chars.unwrap_or(fetch::DEFAULT_QUERY_CHARS);
+                    let page = fetch::fetch_with(url, options).await?;
+                    json!(page.focus(query, max_chars))
+                } else if let [url] = urls.as_slice() {
+                    let max_chars = max_chars.unwrap_or(fetch::DEFAULT_MAX_CHARS);
+                    let page = fetch::fetch_with(url, options).await?;
                     let shown = offset + max_chars.min(page.total_chars.saturating_sub(offset));
-                    if markdown && shown < page.total_chars {
+                    if markdown && target.is_none() && shown < page.total_chars {
                         eprintln!(
                             "Showing characters {offset} to {shown} of {}. Add --offset {shown} for the next part.",
                             page.total_chars
                         );
                     }
                     json!(page.window(offset, max_chars))
-                })
-            } else {
-                let pages = fetch::fetch_many(&urls, options).await;
-                Ok(fetch::pages(&urls, pages, max_chars, query.as_deref()))
+                } else {
+                    let pages = fetch::fetch_many(&urls, options).await;
+                    fetch::pages(&urls, pages, max_chars, query.as_deref())
+                };
+                if let Some(target) = target {
+                    if value.get("pages").is_some() {
+                        target.save_pages(&mut value, content)?;
+                    } else {
+                        target.save_page(&mut value, content)?;
+                    }
+                }
+                Ok::<_, anyfetch::ToolError>(value)
             }
+            .await
         }
     };
     let (value, success) = match result {
@@ -166,9 +250,10 @@ async fn main() -> ExitCode {
 
 /// The content of one page, or of several pages under a heading each.
 fn markdown_text(value: &serde_json::Value) -> String {
-    let content = |page: &serde_json::Value| match page["content"].as_str() {
-        Some(content) => content.to_owned(),
-        None => page["error"].to_string(),
+    let content = |page: &serde_json::Value| match (page["content"].as_str(), &page["saved"]) {
+        (Some(content), _) => content.to_owned(),
+        (None, serde_json::Value::Null) => page["error"].to_string(),
+        (None, saved) => format!("Saved to {}", saved["path"].as_str().unwrap_or_default()),
     };
     let Some(pages) = value["pages"].as_array() else {
         return content(value);

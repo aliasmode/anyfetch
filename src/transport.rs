@@ -3,9 +3,21 @@ use crate::{
     clearance::{self, Clearance},
 };
 use encoding_rs::{Encoding, UTF_8};
-use std::{path::Path, sync::Arc, time::Duration};
+use futures_util::StreamExt;
+use std::{
+    error::Error,
+    net::{IpAddr, Ipv4Addr, Ipv6Addr},
+    path::Path,
+    sync::Arc,
+    time::Duration,
+};
 use url::{Host, Url};
-use wreq::{Client, NoProxy, Proxy, Response, cookie::Jar};
+use wreq::{
+    Client, NoProxy, Proxy, Response,
+    cookie::Jar,
+    dns::{Addrs, Name, Resolve, Resolving},
+    redirect,
+};
 use wreq_util::{Emulation, Platform, Profile};
 
 /// Browser identities in the order tried. Measured on 97 bot-filtered sites (2026-10-11), Safari
@@ -21,10 +33,14 @@ pub(crate) const TIMEOUT: Duration = Duration::from_secs(30);
 /// The identity for requests that carry a clearance from the user's Firefox.
 const FIREFOX: (Profile, Platform) = (Profile::Firefox151, Platform::Linux);
 
+/// The largest answer read into memory.
+pub(crate) const MAX_BODY: usize = 20 * 1024 * 1024;
+
 fn client(
     (profile, platform): (Profile, Platform),
     cleared: Option<(&Clearance, &str)>,
     direct: bool,
+    local: bool,
 ) -> Result<(Client, Arc<Jar>), ToolError> {
     let jar = Arc::new(Jar::default());
     for cookie in cleared.iter().flat_map(|(clearance, _)| &clearance.cookies) {
@@ -41,13 +57,169 @@ fn client(
                 .build(),
         )
         .cookie_provider(jar.clone())
-        .redirect(wreq::redirect::Policy::default())
+        .redirect(redirect::Policy::custom(move |attempt| {
+            match guard(&attempt.uri.to_string(), local) {
+                Ok(()) => redirect::Policy::default().redirect(attempt),
+                Err(error) => attempt.error(error),
+            }
+        }))
         .timeout(TIMEOUT)
         .no_proxy();
+    // Through a proxy the proxy resolves names, so only the address checks in `guard` apply.
     if !direct && let (Some(proxy), _) = proxy()? {
         builder = builder.proxy(proxy);
+    } else {
+        builder = builder.dns_resolver(Resolver { local });
     }
     Ok((builder.build()?, jar))
+}
+
+/// Where an address leads.
+#[derive(Debug, PartialEq)]
+enum Reach {
+    Public,
+    /// This machine or its local network.
+    Private,
+    /// Link-local and cloud metadata addresses, never fetched.
+    Blocked,
+}
+
+fn ip_reach(address: IpAddr) -> Reach {
+    match address {
+        IpAddr::V4(address) => ipv4_reach(address),
+        IpAddr::V6(address) => match address.to_ipv4_mapped() {
+            Some(mapped) => ipv4_reach(mapped),
+            None => ipv6_reach(address),
+        },
+    }
+}
+
+fn ipv4_reach(address: Ipv4Addr) -> Reach {
+    let [first, second, ..] = address.octets();
+    // 100.100.100.200 is the Alibaba Cloud metadata service.
+    if address.is_link_local() || address == Ipv4Addr::new(100, 100, 100, 200) {
+        Reach::Blocked
+    } else if address.is_loopback()
+        || address.is_private()
+        || address.is_unspecified()
+        // 100.64.0.0/10, carrier-grade NAT: the top two bits of the second octet are 01.
+        || (first == 100 && second & 0xc0 == 0x40)
+    {
+        Reach::Private
+    } else {
+        Reach::Public
+    }
+}
+
+fn ipv6_reach(address: Ipv6Addr) -> Reach {
+    let aws_metadata = Ipv6Addr::new(0xfd00, 0xec2, 0, 0, 0, 0, 0, 0x254);
+    let prefix = &address.segments()[..6];
+    // NAT64 (64:ff9b::/96) and IPv4-compatible (::a.b.c.d) addresses lead to the IPv4 address
+    // in their low 32 bits; `::` and `::1` keep their own meaning.
+    let nat64 = prefix == [0x64, 0xff9b, 0, 0, 0, 0];
+    let compatible = prefix == [0; 6] && !address.is_loopback() && !address.is_unspecified();
+    if nat64 || compatible {
+        return ipv4_reach(Ipv4Addr::from_bits(address.to_bits() as u32));
+    }
+    if address.is_unicast_link_local() || address == aws_metadata {
+        Reach::Blocked
+    } else if address.is_loopback() || address.is_unspecified() || address.is_unique_local() {
+        Reach::Private
+    } else {
+        Reach::Public
+    }
+}
+
+fn host_reach(host: &Host<&str>) -> Reach {
+    match host {
+        Host::Domain(domain) => {
+            let name = domain.trim_end_matches('.');
+            if matches!(name, "metadata" | "metadata.google.internal") {
+                Reach::Blocked
+            } else if name == "localhost" || name.ends_with(".localhost") {
+                Reach::Private
+            } else {
+                Reach::Public
+            }
+        }
+        Host::Ipv4(address) => ipv4_reach(*address),
+        Host::Ipv6(address) => ip_reach(IpAddr::V6(*address)),
+    }
+}
+
+/// This machine and its network are allowed only with `ANYFETCH_ALLOW_PRIVATE=1`. With `local`,
+/// they are allowed anyway.
+fn allowed(reach: Reach, local: bool) -> bool {
+    match reach {
+        Reach::Public => true,
+        Reach::Private => {
+            local || std::env::var_os("ANYFETCH_ALLOW_PRIVATE").is_some_and(|value| value == "1")
+        }
+        Reach::Blocked => false,
+    }
+}
+
+fn blocked(target: &str) -> ToolError {
+    ToolError::new(
+        "blocked_address",
+        format!(
+            "{target} is a local, link-local or cloud metadata address. ANYFETCH_ALLOW_PRIVATE=1 allows local and private networks"
+        ),
+    )
+}
+
+/// Refuses a URL whose host requests may not go to.
+fn guard(url: &str, local: bool) -> Result<(), ToolError> {
+    // An address that does not parse fails in the request itself.
+    let Ok(parsed) = Url::parse(url) else {
+        return Ok(());
+    };
+    match parsed.host() {
+        Some(host) if !allowed(host_reach(&host), local) => Err(blocked(url)),
+        _ => Ok(()),
+    }
+}
+
+/// Resolves names with the system and refuses the addresses that `guard` refuses, so a public
+/// name that points at this machine or its network is caught too.
+struct Resolver {
+    local: bool,
+}
+
+impl Resolve for Resolver {
+    fn resolve(&self, name: Name) -> Resolving {
+        Box::pin(lookup(name, self.local))
+    }
+}
+
+async fn lookup(name: Name, local: bool) -> Result<Addrs, Box<dyn Error + Send + Sync>> {
+    let addresses: Vec<_> = tokio::net::lookup_host((name.as_str(), 0)).await?.collect();
+    if addresses
+        .iter()
+        .any(|address| !allowed(ip_reach(address.ip()), local))
+    {
+        return Err(blocked(name.as_str()).into());
+    }
+    Ok(Box::new(addresses.into_iter()))
+}
+
+/// `public_site`, and every address of the name is public, even with `ANYFETCH_ALLOW_PRIVATE=1`.
+/// For programs that run page scripts and make their own requests, so skip `Resolver`.
+pub(crate) async fn resolves_public(url: &str) -> bool {
+    if !public_site(url) {
+        return false;
+    }
+    let Ok(parsed) = Url::parse(url) else {
+        return false;
+    };
+    // `public_site` has checked an address host already.
+    let Some(Host::Domain(domain)) = parsed.host() else {
+        return true;
+    };
+    match tokio::net::lookup_host((domain, 0)).await {
+        Ok(mut addresses) => addresses.all(|address| ip_reach(address.ip()) == Reach::Public),
+        Err(_) => false,
+    }
 }
 
 /// Optional HTTP proxy from `~/.config/anyfetch/proxy`: one `host:port:username:password` line.
@@ -93,7 +265,10 @@ async fn routed<F: Future<Output = Result<Body, ToolError>>>(
 ) -> Result<Body, ToolError> {
     let (proxy, both) = proxy()?;
     match request(proxy.is_none()).await {
-        Err(error) if both && refused(&error) => request(true).await.or(Err(error)),
+        Err(error) if both && refused(&error) => request(true).await.map_err(|direct| ToolError {
+            message: format!("{} Without the proxy: {}", error.message, direct.message),
+            ..error
+        }),
         result => result,
     }
 }
@@ -130,6 +305,16 @@ pub(crate) async fn get(url: &str, accept: fn(&str) -> bool) -> Result<Body, Too
     routed(|direct| attempt(url, accept, IDENTITIES[0], None, direct)).await
 }
 
+/// Like `get`, for a server of the user's, such as their SearXNG, that may run on this machine
+/// or its network. Link-local and metadata addresses stay refused.
+pub(crate) async fn get_local(url: &str, accept: fn(&str) -> bool) -> Result<Body, ToolError> {
+    routed(|direct| async move {
+        let (client, jar) = client(IDENTITIES[0], None, direct, true)?;
+        open(&client, &jar, url, accept, None, true).await
+    })
+    .await
+}
+
 /// One request to a data address of a site, with the headers that the site's own pages send.
 /// Some of these answer only a visitor of the site: with `entry`, the same client opens that
 /// page first.
@@ -139,10 +324,11 @@ pub(crate) async fn get_with(
     entry: Option<&str>,
 ) -> Result<Body, ToolError> {
     routed(|direct| async move {
-        let (client, jar) = client(IDENTITIES[0], None, direct)?;
+        let (client, jar) = client(IDENTITIES[0], None, direct, false)?;
         if let Some(entry) = entry {
-            open(&client, &jar, entry, |_| true, None).await?;
+            open(&client, &jar, entry, |_| true, None, false).await?;
         }
+        guard(url, false)?;
         let mut request = client.get(url);
         for (name, value) in headers {
             request = request.header(*name, *value);
@@ -195,9 +381,12 @@ async fn page(
     }
     match result {
         Err(error) if cloudflare_challenge(&error) => {
-            let Some(browser) = browser.filter(|_| direct && public_site(url)) else {
+            let Some(browser) = browser.filter(|_| direct) else {
                 return Err(error);
             };
+            if !resolves_public(url).await {
+                return Err(error);
+            }
             match clearance::ensure(browser, url).await {
                 Ok(fresh) => attempt(url, accept, FIREFOX, Some(&fresh), direct).await,
                 Err(_) => Err(error),
@@ -227,15 +416,21 @@ pub(crate) fn direct() -> bool {
 
 /// The browser is kept away from addresses that are not public sites.
 pub(crate) fn public_site(url: &str) -> bool {
-    match Url::parse(url).ok().as_ref().and_then(Url::host) {
-        // A name without a dot is a machine on the local network.
-        Some(Host::Domain(domain)) => domain.contains('.') && domain != "localhost",
-        Some(Host::Ipv4(address)) => {
-            !(address.is_loopback() || address.is_private() || address.is_link_local())
+    let Ok(url) = Url::parse(url) else {
+        return false;
+    };
+    let Some(host) = url.host() else {
+        return false;
+    };
+    let local_name = match &host {
+        Host::Domain(domain) => {
+            let name = domain.trim_end_matches('.');
+            // A name without a dot is a machine on the local network.
+            !name.contains('.') || name.ends_with(".local") || name.ends_with(".internal")
         }
-        Some(Host::Ipv6(address)) => !(address.is_loopback() || address.is_unique_local()),
-        None => false,
-    }
+        _ => false,
+    };
+    !local_name && host_reach(&host) == Reach::Public
 }
 
 async fn attempt(
@@ -245,9 +440,10 @@ async fn attempt(
     cleared: Option<&Clearance>,
     direct: bool,
 ) -> Result<Body, ToolError> {
-    let (client, jar) = client(identity, cleared.map(|clearance| (clearance, url)), direct)?;
+    let cleared_for = cleared.map(|clearance| (clearance, url));
+    let (client, jar) = client(identity, cleared_for, direct, false)?;
     let agent = cleared.map(|clearance| clearance.user_agent.as_str());
-    open(&client, &jar, url, accept, agent).await
+    open(&client, &jar, url, accept, agent, false).await
 }
 
 /// What a page asks a browser to do before it shows its content.
@@ -267,11 +463,13 @@ async fn open(
     url: &str,
     accept: fn(&str) -> bool,
     agent: Option<&str>,
+    local: bool,
 ) -> Result<Body, ToolError> {
     let get = |target: &str| match agent {
         Some(agent) => client.get(target).header("user-agent", agent),
         None => client.get(target),
     };
+    guard(url, local)?;
     let (body, check) = read(get(url).send().await?, false, accept).await?;
     let next = match check {
         None => return Ok(body),
@@ -287,11 +485,21 @@ async fn open(
             page.into()
         }
     };
+    guard(&next, local)?;
     let response = get(&next)
         .header("referer", &body.url)
         .send()
         .await
-        .map_err(|_| ToolError::new("network_error", "The request after the bot check failed"))?;
+        .map_err(|error| match ToolError::from(error) {
+            blocked @ ToolError {
+                code: "blocked_address",
+                ..
+            } => blocked,
+            other => ToolError::new(
+                "network_error",
+                format!("The request after the bot check failed: {}", other.message),
+            ),
+        })?;
     Ok(read(response, true, accept).await?.0)
 }
 
@@ -327,42 +535,53 @@ async fn read(
         });
     }
     let url = response.uri().to_string();
-    let bytes = response
-        .bytes()
-        .await
-        .map_err(|error| {
-            if completed {
-                ToolError::new("network_error", "Could not read Anubis completion response")
-            } else {
-                error.into()
-            }
-        })?
-        .to_vec();
+    let too_large = || ToolError {
+        status: Some(status),
+        ..ToolError::new(
+            "too_large",
+            format!("The answer is larger than {} MB", MAX_BODY / 1024 / 1024),
+        )
+    };
+    if response
+        .content_length()
+        .is_some_and(|length| length > MAX_BODY as u64)
+    {
+        return Err(too_large());
+    }
+    let mut bytes = Vec::new();
+    let mut stream = std::pin::pin!(response.bytes_stream());
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk?;
+        if bytes.len() + chunk.len() > MAX_BODY {
+            return Err(too_large());
+        }
+        bytes.extend_from_slice(&chunk);
+    }
     let body = Body {
         url,
         status,
         content_type,
         bytes,
     };
-    if is_html
-        && let Some(challenge) = anubis::parse(&body.text()).map_err(|mut error| {
-            error.status = Some(status);
-            error
-        })?
-    {
-        if completed {
-            return Err(ToolError {
-                status: Some(status),
-                ..ToolError::new(
-                    "challenge_failed",
-                    "Anubis challenge remains after completion",
-                )
-            });
-        }
-        return Ok((body, Some(Check::Anubis(challenge))));
-    }
     if is_html {
         let page = body.text();
+        if page.contains("anubis_challenge")
+            && let Some(challenge) = anubis::parse(&page).map_err(|mut error| {
+                error.status = Some(status);
+                error
+            })?
+        {
+            if completed {
+                return Err(ToolError {
+                    status: Some(status),
+                    ..ToolError::new(
+                        "challenge_failed",
+                        "Anubis challenge remains after completion",
+                    )
+                });
+            }
+            return Ok((body, Some(Check::Anubis(challenge))));
+        }
         let check = challenge::cookie(&page).map(Check::Cookie);
         if let Some(check) = check.or_else(|| challenge::doubled(&page).map(Check::Query)) {
             if completed {
@@ -416,4 +635,93 @@ pub fn check_response(response: &Response) -> Result<(), ToolError> {
             .and_then(|value| value.to_str().ok())
             .map(str::to_owned),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn classifies_hosts_by_where_they_lead() {
+        for (url, reach) in [
+            ("http://example.com/", Reach::Public),
+            ("http://8.8.8.8/", Reach::Public),
+            ("http://100.128.0.1/", Reach::Public),
+            ("http://[2606:4700::1111]/", Reach::Public),
+            ("http://localhost/", Reach::Private),
+            ("http://localhost./", Reach::Private),
+            ("http://app.localhost/", Reach::Private),
+            ("http://127.0.0.1/", Reach::Private),
+            ("http://10.1.2.3/", Reach::Private),
+            ("http://172.16.0.1/", Reach::Private),
+            ("http://192.168.1.1/", Reach::Private),
+            ("http://100.64.0.1/", Reach::Private),
+            ("http://0.0.0.0/", Reach::Private),
+            ("http://[::]/", Reach::Private),
+            ("http://[::1]/", Reach::Private),
+            ("http://[fd12::1]/", Reach::Private),
+            ("http://[::ffff:127.0.0.1]/", Reach::Private),
+            ("http://169.254.169.254/", Reach::Blocked),
+            ("http://[::ffff:169.254.169.254]/", Reach::Blocked),
+            ("http://[fe80::1]/", Reach::Blocked),
+            ("http://[fd00:ec2::254]/", Reach::Blocked),
+            ("http://100.100.100.200/", Reach::Blocked),
+            ("http://metadata.google.internal/", Reach::Blocked),
+            ("http://[64:ff9b::808:808]/", Reach::Public),
+            ("http://[64:ff9b::7f00:1]/", Reach::Private),
+            ("http://[64:ff9b::a9fe:a9fe]/", Reach::Blocked),
+            ("http://[::a00:1]/", Reach::Private),
+            ("http://[::a9fe:a9fe]/", Reach::Blocked),
+        ] {
+            let parsed = Url::parse(url).unwrap();
+            assert_eq!(host_reach(&parsed.host().unwrap()), reach, "{url}");
+        }
+    }
+
+    #[test]
+    fn local_allows_private_but_never_blocked() {
+        assert!(allowed(Reach::Private, true));
+        assert!(!allowed(Reach::Blocked, true));
+    }
+
+    struct Refuses;
+
+    impl Resolve for Refuses {
+        fn resolve(&self, name: Name) -> Resolving {
+            Box::pin(async move { Err(blocked(name.as_str()).into()) })
+        }
+    }
+
+    #[tokio::test]
+    async fn request_errors_keep_the_code_of_a_tool_error_inside() {
+        let client = Client::builder().dns_resolver(Refuses).build().unwrap();
+        let error = client.get("http://example.com/").send().await.unwrap_err();
+        let error = ToolError::from(error);
+        assert_eq!(error.code, "blocked_address");
+        assert!(
+            error.message.starts_with("example.com is"),
+            "{}",
+            error.message
+        );
+        assert!(!refused(&error));
+    }
+
+    #[test]
+    fn public_site_excludes_local_names_and_addresses() {
+        for url in [
+            "http://intranet/",
+            "http://printer.local/",
+            "http://db.internal/",
+            "http://localhost./",
+            "http://app.localhost/",
+            "http://100.64.0.1/",
+            "http://0.0.0.0/",
+            "http://[::]/",
+            "http://[fe80::1]/",
+            "http://[::ffff:10.0.0.1]/",
+        ] {
+            assert!(!public_site(url), "{url}");
+        }
+        assert!(public_site("https://example.com/"));
+    }
 }

@@ -5,7 +5,10 @@ mod challenge;
 pub mod clearance;
 pub mod fetch;
 mod focus;
+#[doc(hidden)]
+pub mod jq;
 pub mod mcp;
+pub mod out;
 mod pdf;
 pub mod render;
 pub mod search;
@@ -18,6 +21,17 @@ pub(crate) fn retrieved_at() -> String {
     time::OffsetDateTime::now_utc()
         .format(&time::format_description::well_known::Rfc3339)
         .expect("current UTC time fits RFC 3339")
+}
+
+/// Lowercase hex of `bytes`. sha2 0.11 digests no longer implement `LowerHex`.
+pub(crate) fn hex(bytes: &[u8]) -> String {
+    use std::fmt::Write;
+    bytes
+        .iter()
+        .fold(String::with_capacity(bytes.len() * 2), |mut out, byte| {
+            let _ = write!(out, "{byte:02x}");
+            out
+        })
 }
 
 #[derive(Debug, Serialize)]
@@ -57,6 +71,19 @@ impl From<wreq::Error> for ToolError {
         if error.is_timeout() {
             return Self::new("timeout", "The site did not answer within 30 seconds");
         }
-        Self::new("network_error", error.to_string())
+        // A redirect or name refused by the address guard hides its error in the source chain.
+        let mut message = error.to_string();
+        let mut source = std::error::Error::source(&error);
+        while let Some(cause) = source {
+            if let Some(inner) = cause.downcast_ref::<ToolError>() {
+                return Self::new(inner.code, inner.message.clone());
+            }
+            let cause_text = cause.to_string();
+            if !message.contains(&cause_text) {
+                message = format!("{message}: {cause_text}");
+            }
+            source = cause.source();
+        }
+        Self::new("network_error", message)
     }
 }

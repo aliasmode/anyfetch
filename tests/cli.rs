@@ -129,6 +129,7 @@ async fn cli_fetch_sends_a_saved_clearance_for_the_site() {
             .env("HOME", &home)
             .env("USERPROFILE", &home)
             .env("ANYFETCH_BROWSER", "off")
+            .env("ANYFETCH_ALLOW_PRIVATE", "1")
             .kill_on_drop(true)
             .output(),
     )
@@ -185,6 +186,7 @@ async fn cli_fetch_renders_a_page_that_has_no_text_without_its_scripts() {
             .env("HOME", &home)
             .env("ANYFETCH_BROWSER", "off")
             .env("ANYFETCH_RENDERER", &renderer)
+            .env("ANYFETCH_ALLOW_PRIVATE", "1")
             .kill_on_drop(true)
             .output(),
     )
@@ -294,6 +296,7 @@ async fn cli_goes_direct_when_the_proxy_route_is_refused_and_the_file_allows_it(
             .env("HOME", &home)
             .env("ANYFETCH_BROWSER", "off")
             .env("ANYFETCH_RENDERER", "off")
+            .env("ANYFETCH_ALLOW_PRIVATE", "1")
             .kill_on_drop(true)
             .output(),
     )
