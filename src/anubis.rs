@@ -90,7 +90,7 @@ fn solve(
         if hash[..difficulty / 2].iter().all(|byte| *byte == 0)
             && (difficulty.is_multiple_of(2) || hash[difficulty / 2] < 16)
         {
-            return Ok((nonce, format!("{hash:x}")));
+            return Ok((nonce, crate::hex(&hash)));
         }
     }
     Err(ToolError::new(

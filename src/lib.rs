@@ -20,6 +20,17 @@ pub(crate) fn retrieved_at() -> String {
         .expect("current UTC time fits RFC 3339")
 }
 
+/// Lowercase hex of `bytes`. sha2 0.11 digests no longer implement `LowerHex`.
+pub(crate) fn hex(bytes: &[u8]) -> String {
+    use std::fmt::Write;
+    bytes
+        .iter()
+        .fold(String::with_capacity(bytes.len() * 2), |mut out, byte| {
+            let _ = write!(out, "{byte:02x}");
+            out
+        })
+}
+
 #[derive(Debug, Serialize)]
 pub struct ToolError {
     pub code: &'static str,
