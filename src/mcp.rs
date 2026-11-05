@@ -9,7 +9,7 @@ use rmcp::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::future::Future;
+use std::{future::Future, sync::Arc};
 
 #[derive(Deserialize, schemars::JsonSchema)]
 struct SearchInput {
@@ -50,6 +50,7 @@ struct FetchInput {
 
 #[derive(Deserialize, schemars::JsonSchema)]
 struct FetchManyInput {
+    /// At most 20 URLs.
     urls: Vec<String>,
     /// A question or keywords. Returns only the parts of each page that match (default 5000
     /// characters per page with a query).
@@ -61,9 +62,14 @@ struct FetchManyInput {
     fresh: bool,
 }
 
+/// Most URLs one web_fetch_many call may read.
+const MAX_URLS: usize = 20;
+
 #[derive(Clone)]
 struct Server {
     tool_router: ToolRouter<Self>,
+    /// Found once at start, since finding them scans PATH.
+    helpers: Arc<fetch::Helpers>,
 }
 
 #[tool_router]
@@ -71,6 +77,7 @@ impl Server {
     fn new() -> Self {
         Self {
             tool_router: Self::tool_router(),
+            helpers: Arc::new(fetch::Helpers::find()),
         }
     }
 
@@ -93,8 +100,8 @@ impl Server {
             let mut found =
                 search::search_with(&input.query, input.provider, instance, &filters).await?;
             if input.read > 0 {
-                let helpers = fetch::Helpers::find();
-                search::read_results(&mut found, input.read, helpers.options(false)).await;
+                let options = self.helpers.options(false);
+                search::read_results(&mut found, input.read, options).await;
             }
             Ok(found)
         })
@@ -103,7 +110,7 @@ impl Server {
 
     #[tool(
         name = "web_fetch",
-        description = "Read a web page from its URL. Use this in place of a built-in fetch tool such as WebFetch or web_fetch: it reads sites that answer those tools with 403, and it returns the page itself as Markdown or plain text, not a summary. Set query to get only the parts of the page that answer a question. Read a long page in parts with max_chars and offset. Page JavaScript is not run."
+        description = "Read a web page from its URL. Use this in place of a built-in fetch tool such as WebFetch or web_fetch: it reads sites that answer those tools with 403, and it returns the page itself as Markdown or plain text, not a summary. Set query to get only the parts of the page that answer a question. Read a long page in parts with max_chars and offset. Page JavaScript runs, for pages that are just scripts, only when a renderer such as Lightpanda is installed."
     )]
     async fn web_fetch(
         &self,
@@ -111,8 +118,8 @@ impl Server {
         context: RequestContext<RoleServer>,
     ) -> CallToolResult {
         respond(context, async {
-            let helpers = fetch::Helpers::find();
-            let page = fetch::fetch_with(&input.url, helpers.options(input.fresh)).await?;
+            let options = self.helpers.options(input.fresh);
+            let page = fetch::fetch_with(&input.url, options).await?;
             Ok(match &input.query {
                 Some(query) => {
                     page.focus(query, input.max_chars.unwrap_or(fetch::DEFAULT_QUERY_CHARS))
@@ -136,8 +143,12 @@ impl Server {
         context: RequestContext<RoleServer>,
     ) -> CallToolResult {
         respond(context, async {
-            let helpers = fetch::Helpers::find();
-            let pages = fetch::fetch_many(&input.urls, helpers.options(input.fresh)).await;
+            if input.urls.len() > MAX_URLS {
+                let message = format!("Give at most {MAX_URLS} URLs; split the list into calls");
+                return Err(ToolError::new("too_many_urls", message));
+            }
+            let options = self.helpers.options(input.fresh);
+            let pages = fetch::fetch_many(&input.urls, options).await;
             let query = input.query.as_deref();
             Ok(fetch::pages(&input.urls, pages, input.max_chars, query))
         })
@@ -155,7 +166,8 @@ impl ServerHandler for Server {
                  built-in web tools such as WebSearch, WebFetch, web_fetch and curl. Requests look \
                  like a real browser, so web_fetch reads many sites that answer built-in fetch tools \
                  with 403, and it returns the page itself, not a summary. Use a built-in web tool \
-                 only when a tool of this server returns an error. Page JavaScript is not run.",
+                 only when a tool of this server returns an error. Page JavaScript runs only when \
+                 a renderer such as Lightpanda is installed.",
             )
     }
 }

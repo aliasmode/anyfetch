@@ -111,7 +111,21 @@ pub async fn fetch(url: &str) -> Result<FetchResponse, ToolError> {
     fetch_with(url, Options::default()).await
 }
 
+/// Longest a fetch may take with all its retries, browser, renderer and proxy fallback.
+const FETCH_DEADLINE: std::time::Duration = std::time::Duration::from_secs(90);
+
 pub async fn fetch_with(url: &str, options: Options<'_>) -> Result<FetchResponse, ToolError> {
+    tokio::time::timeout(FETCH_DEADLINE, fetch_cached(url, options))
+        .await
+        .unwrap_or_else(|_| {
+            Err(ToolError::new(
+                "timeout",
+                "The page took longer than 90 seconds to fetch",
+            ))
+        })
+}
+
+async fn fetch_cached(url: &str, options: Options<'_>) -> Result<FetchResponse, ToolError> {
     let cache = options.cache && transport::public_site(url);
     if cache
         && !options.fresh
@@ -126,12 +140,18 @@ pub async fn fetch_with(url: &str, options: Options<'_>) -> Result<FetchResponse
     Ok(page)
 }
 
-/// Fetches several pages at the same time. Results are in the order of `urls`.
+/// Fetches several pages at the same time, at most 8 at once. Results are in the order of `urls`.
 pub async fn fetch_many(
     urls: &[String],
     options: Options<'_>,
 ) -> Vec<Result<FetchResponse, ToolError>> {
-    futures_util::future::join_all(urls.iter().map(|url| fetch_with(url, options))).await
+    use futures_util::StreamExt;
+    // Collected first: a closure in the stream type breaks the `Send` proof of the tool futures.
+    let fetches: Vec<_> = urls.iter().map(|url| fetch_with(url, options)).collect();
+    futures_util::stream::iter(fetches)
+        .buffered(8)
+        .collect()
+        .await
 }
 
 /// The JSON answer for several pages: each entry is the page, cut to `max_chars`, or its error.
@@ -278,28 +298,29 @@ fn charset(mime: &mime::Mime) -> Option<&'static Encoding> {
 }
 
 fn html_charset(bytes: &[u8]) -> Option<&'static Encoding> {
-    let html = String::from_utf8_lossy(bytes);
+    // Like the HTML prescan, look only near the start instead of parsing the whole page.
+    let html = String::from_utf8_lossy(&bytes[..bytes.len().min(4096)]);
     let document = Document::from(html.as_ref());
-    for meta in document.select("meta").iter() {
+    let encoding = document.select("meta").iter().find_map(|meta| {
         if let Some(encoding) = meta
             .attr("charset")
             .and_then(|label| Encoding::for_label(label.as_bytes()))
         {
             return Some(encoding);
         }
-        if meta
-            .attr("http-equiv")
-            .is_some_and(|value| value.eq_ignore_ascii_case("content-type"))
-            && let Some(encoding) = meta
-                .attr("content")
-                .and_then(|value| value.parse::<mime::Mime>().ok())
-                .as_ref()
-                .and_then(charset)
-        {
-            return Some(encoding);
-        }
+        meta.attr("http-equiv")
+            .filter(|value| value.eq_ignore_ascii_case("content-type"))
+            .and(meta.attr("content"))
+            .and_then(|value| value.parse::<mime::Mime>().ok())
+            .as_ref()
+            .and_then(charset)
+    })?;
+    // The text was readable as ASCII, so a declared UTF-16 is wrong; the spec reads it as UTF-8.
+    if encoding == encoding_rs::UTF_16LE || encoding == encoding_rs::UTF_16BE {
+        Some(UTF_8)
+    } else {
+        Some(encoding)
     }
-    None
 }
 
 pub fn extract(html: &str, url: &str) -> Result<Extracted, ToolError> {
@@ -498,9 +519,12 @@ fn embedded_text(document: &Document) -> (Vec<String>, Vec<String>) {
         }
         let mut rest = &*source;
         while let Some(at) = rest.find("{\"") {
-            let assigned = rest[..at].trim_end().ends_with(['=', '(', ':']);
+            if !rest[..at].trim_end().ends_with(['=', '(', ':']) {
+                rest = &rest[at + 2..];
+                continue;
+            }
             let mut values = serde_json::Deserializer::from_str(&rest[at..]).into_iter();
-            match values.next().filter(|_| assigned) {
+            match values.next() {
                 Some(Ok(data)) => {
                     prose(&data, "", &mut found);
                     rich_text(&data, &mut bodies);

@@ -312,7 +312,7 @@ async fn cancellation_stops_anubis_work_and_allows_clean_shutdown() {
     while !request.ends_with(b"\r\n\r\n") {
         request.push(socket.read_u8().await.unwrap());
     }
-    let html = r#"<script id="anubis_challenge">{"rules":{"algorithm":"fast","difficulty":64},"challenge":{"id":"synthetic","randomData":"synthetic"}}</script>"#;
+    let html = r#"<script id="anubis_challenge">{"rules":{"algorithm":"fast","difficulty":8},"challenge":{"id":"synthetic","randomData":"synthetic"}}</script>"#;
     socket.write_all(format!("HTTP/1.1 403 Forbidden\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{html}", html.len()).as_bytes()).await.unwrap();
     socket.shutdown().await.unwrap();
     tokio::time::sleep(Duration::from_millis(100)).await;

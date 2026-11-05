@@ -7,7 +7,7 @@ use std::{
         Arc,
         atomic::{AtomicBool, Ordering},
     },
-    time::Instant,
+    time::{Duration, Instant},
 };
 use url::Url;
 
@@ -55,7 +55,7 @@ pub(crate) fn parse(html: &str) -> Result<Option<Challenge>, ToolError> {
     };
     challenge.base_prefix = config("script#anubis_base_prefix")?;
     if challenge.rules.algorithm != "fast"
-        || challenge.rules.difficulty > 64
+        || challenge.rules.difficulty > 8
         || challenge.challenge.id.is_empty()
         || challenge.challenge.random_data.is_empty()
         || !config("script#anubis_public_url")?.is_empty()
@@ -65,6 +65,10 @@ pub(crate) fn parse(html: &str) -> Result<Option<Challenge>, ToolError> {
     Ok(Some(challenge))
 }
 
+/// Bounds proof work so a hostile difficulty cannot pin a core.
+const DEADLINE: Duration = Duration::from_secs(30);
+
+/// Tells blocking work to stop when the async side that waits for it goes away.
 struct CancelOnDrop(Arc<AtomicBool>);
 
 impl Drop for CancelOnDrop {
@@ -78,11 +82,18 @@ fn solve(
     difficulty: usize,
     cancelled: &AtomicBool,
 ) -> Result<(i64, String), ToolError> {
+    let deadline = Instant::now() + DEADLINE;
     let mut prefix = Sha256::new();
     prefix.update(data.as_bytes());
     for nonce in 0..=i64::MAX {
         if cancelled.load(Ordering::Relaxed) {
             return Err(ToolError::new("cancelled", "Request cancelled"));
+        }
+        if nonce % 4096 == 0 && Instant::now() > deadline {
+            return Err(ToolError::new(
+                "challenge_failed",
+                "Anubis proof took too long",
+            ));
         }
         let mut hasher = prefix.clone();
         hasher.update(nonce.to_string().as_bytes());
@@ -170,7 +181,7 @@ mod tests {
     fn parses_only_supported_structural_challenges() {
         assert!(parse("<html>ordinary page</html>").unwrap().is_none());
         for (algorithm, difficulty, extra) in [
-            ("fast", 65, ""),
+            ("fast", 9, ""),
             ("unknown", 1, ""),
             ("fast", 1, "<script id=anubis_base_prefix>{}</script>"),
             (

@@ -4,6 +4,7 @@ use crate::fetch::FetchResponse;
 use sha2::{Digest, Sha256};
 use std::{
     path::{Path, PathBuf},
+    sync::atomic::{AtomicU64, Ordering},
     time::Duration,
 };
 
@@ -51,8 +52,31 @@ fn write(directory: &Path, page: &FetchResponse) {
         }
     }
     if let Ok(json) = serde_json::to_vec(page) {
-        let _ = std::fs::write(file(directory, &page.requested_url), json);
+        let _ = write_private(&file(directory, &page.requested_url), &json);
     }
+}
+
+/// Writes `bytes` to `path` readable by the owner only (on Unix). A temporary file and a rename
+/// keep concurrent readers from seeing a partial file.
+pub(crate) fn write_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    // The counter separates parallel writes from this process.
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let unique = NEXT.fetch_add(1, Ordering::Relaxed);
+    let mut name = path.as_os_str().to_owned();
+    name.push(format!(".{}-{unique}.tmp", std::process::id()));
+    let temporary = PathBuf::from(name);
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+    let written = options
+        .open(&temporary)
+        .and_then(|mut file| std::io::Write::write_all(&mut file, bytes))
+        .and_then(|()| std::fs::rename(&temporary, path));
+    if written.is_err() {
+        let _ = std::fs::remove_file(&temporary);
+    }
+    written
 }
 
 #[cfg(test)]
