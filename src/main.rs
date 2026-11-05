@@ -73,6 +73,9 @@ enum Command {
         /// Fetch again even if a copy from the last 15 minutes exists.
         #[arg(long)]
         fresh: bool,
+        /// Caption language for YouTube transcripts (needs yt-dlp), such as en or es. Default en.
+        #[arg(long)]
+        lang: Option<String>,
     },
 }
 
@@ -136,7 +139,7 @@ async fn cli() -> ExitCode {
             {
                 let helpers = fetch::Helpers::find();
                 let selector = fetch::non_empty(selector.as_deref());
-                let options = helpers.options(false, content, selector);
+                let options = helpers.options(false, content, selector, None);
                 search::read_results(found, read, options).await;
             }
             found.map(|value| json!(value))
@@ -149,11 +152,13 @@ async fn cli() -> ExitCode {
             fresh,
             content,
             selector,
+            lang,
             ..
         } => {
             let helpers = fetch::Helpers::find();
             let selector = fetch::non_empty(selector.as_deref());
-            let options = helpers.options(fresh, content, selector);
+            let lang = fetch::non_empty(lang.as_deref());
+            let options = helpers.options(fresh, content, selector, lang);
             if let ([url], Some(query)) = (urls.as_slice(), &query) {
                 let max_chars = max_chars.unwrap_or(fetch::DEFAULT_QUERY_CHARS);
                 let page = fetch::fetch_with(url, options).await;

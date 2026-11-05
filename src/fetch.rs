@@ -99,6 +99,10 @@ pub struct Options<'a> {
     /// A program that runs a page's scripts and prints the finished HTML, for pages that hold
     /// no text without them. See [`crate::render::renderer`].
     pub renderer: Option<&'a Path>,
+    /// yt-dlp, which YouTube transcripts need.
+    pub yt_dlp: Option<&'a Path>,
+    /// Caption language of a YouTube transcript. Default `en`.
+    pub lang: Option<&'a str>,
     /// Keep a copy of each public page for 15 minutes and answer from it.
     pub cache: bool,
     /// Fetch the page again and replace the copy.
@@ -113,6 +117,7 @@ pub struct Options<'a> {
 pub struct Helpers {
     browser: Option<PathBuf>,
     renderer: Option<PathBuf>,
+    yt_dlp: Option<PathBuf>,
 }
 
 impl Helpers {
@@ -120,6 +125,7 @@ impl Helpers {
         Self {
             browser: crate::clearance::browser(),
             renderer: render::renderer(),
+            yt_dlp: alternates::yt_dlp(),
         }
     }
 
@@ -129,10 +135,13 @@ impl Helpers {
         fresh: bool,
         format: Format,
         selector: Option<&'a str>,
+        lang: Option<&'a str>,
     ) -> Options<'a> {
         Options {
             browser: self.browser.as_deref(),
             renderer: self.renderer.as_deref(),
+            yt_dlp: self.yt_dlp.as_deref(),
+            lang,
             cache: true,
             fresh,
             format,
@@ -150,11 +159,12 @@ pub fn non_empty(text: Option<&str>) -> Option<&str> {
 /// that changes the processed content (JSON quoting keeps the parts from running together).
 fn cache_key(url: &str, options: &Options<'_>) -> String {
     let readable = options.format == Format::Readable && options.selector.is_none();
-    if readable {
+    if readable && !alternates::is_youtube(url) {
         return url.to_owned();
     }
+    let lang = (readable && alternates::is_youtube(url)).then(|| options.lang.unwrap_or("en"));
     let selector = non_empty(options.selector);
-    serde_json::to_string(&(url, options.format, selector)).expect("a key serializes")
+    serde_json::to_string(&(url, options.format, selector, lang)).expect("a key serializes")
 }
 
 pub async fn fetch(url: &str) -> Result<FetchResponse, ToolError> {
@@ -235,7 +245,8 @@ async fn download(url: &str, options: Options<'_>) -> Result<FetchResponse, Tool
     let readable = options.format == Format::Readable && options.selector.is_none();
     if readable
         && let Ok(parsed) = url::Url::parse(url)
-        && let Some(page) = alternates::read(&parsed).await
+        && let Some(page) =
+            alternates::read_page(&parsed, options.lang.unwrap_or("en"), options.yt_dlp).await?
     {
         return Ok(FetchResponse {
             requested_url: url.to_owned(),
@@ -976,6 +987,28 @@ mod tests {
             &with(Format::Html, Some("x")),
         );
         assert_ne!(tricky, split);
+    }
+
+    #[test]
+    fn language_is_in_the_key_of_a_readable_video_only() {
+        let url = "https://www.youtube.com/watch?v=dQw4w9WgXcQ";
+        let lang = |lang, format| Options {
+            lang,
+            format,
+            ..Options::default()
+        };
+        assert_ne!(
+            cache_key(url, &lang(Some("es"), Format::Readable)),
+            cache_key(url, &lang(None, Format::Readable))
+        );
+        assert_eq!(
+            cache_key(url, &lang(None, Format::Readable)),
+            cache_key(url, &lang(Some("en"), Format::Readable))
+        );
+        assert_eq!(
+            cache_key(url, &lang(Some("es"), Format::Text)),
+            cache_key(url, &lang(None, Format::Text))
+        );
     }
 
     #[test]

@@ -6,9 +6,15 @@
 //! [`parse`] is for a page that arrives, but holds its content where the general extractor
 //! cannot read it.
 
-use crate::transport;
+use crate::{ToolError, transport};
 use dom_query::Document;
 use serde_json::Value;
+use std::{
+    path::{Path, PathBuf},
+    process::Stdio,
+    sync::atomic::{AtomicU64, Ordering},
+    time::Duration,
+};
 use url::Url;
 
 pub(crate) struct Page {
@@ -106,6 +112,283 @@ fn dated(slug: &str) -> bool {
             _ => byte.is_ascii_digit(),
         };
         date.iter().enumerate().all(fits)
+    })
+}
+
+/// The id of the video at a YouTube watch, short, shorts or youtu.be address.
+fn youtube_id(url: &Url) -> Option<String> {
+    let host = url.host_str()?.trim_start_matches("www.");
+    let segments: Vec<&str> = url
+        .path_segments()?
+        .filter(|part| !part.is_empty())
+        .collect();
+    let id = match (host, segments.as_slice()) {
+        ("youtube.com" | "m.youtube.com" | "music.youtube.com", ["watch"]) => {
+            let mut ids = url.query_pairs().filter(|(key, _)| key == "v");
+            ids.next()?.1.into_owned()
+        }
+        ("youtu.be", [id, ..]) | ("youtube.com" | "m.youtube.com", ["shorts", id, ..]) => {
+            id.to_string()
+        }
+        _ => return None,
+    };
+    let valid = id.len() == 11
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"-_".contains(&b));
+    valid.then_some(id)
+}
+
+pub(crate) fn is_youtube(url: &str) -> bool {
+    Url::parse(url).is_ok_and(|url| youtube_id(&url).is_some())
+}
+
+/// The yt-dlp program on PATH, which YouTube transcripts require.
+pub(crate) fn yt_dlp() -> Option<PathBuf> {
+    let name = format!("yt-dlp{}", std::env::consts::EXE_SUFFIX);
+    let path = std::env::var_os("PATH").unwrap_or_default();
+    let mut candidates = std::env::split_paths(&path).map(|folder| folder.join(&name));
+    candidates.find(|candidate| candidate.is_file())
+}
+
+/// Like [`read`], but a YouTube video gives its transcript, or the reason it has none.
+pub(crate) async fn read_page(
+    url: &Url,
+    lang: &str,
+    yt_dlp: Option<&Path>,
+) -> Result<Option<Page>, ToolError> {
+    match youtube_id(url) {
+        Some(id) => transcript(&id, lang, yt_dlp).await.map(Some),
+        None => Ok(read(url).await),
+    }
+}
+
+/// One caption cue, or one line of merged cues.
+#[derive(Debug, PartialEq)]
+struct Cue {
+    start_ms: u64,
+    text: String,
+}
+
+struct Video {
+    title: String,
+    channel: String,
+    seconds: u64,
+}
+
+/// A transcript line covers cues that start within this time of its first cue.
+const LINE_MS: u64 = 20_000;
+
+/// Longest yt-dlp may take to read one video.
+const YT_DLP_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// Most of yt-dlp's stderr that is kept.
+const STDERR_CAP: usize = 4096;
+
+/// A language code: 2-3 letters, optionally `-` and 2-8 letters or digits (en, pt-BR, zh-Hans).
+fn valid_lang(lang: &str) -> bool {
+    let (base, region) = match lang.split_once('-') {
+        Some((base, region)) => (base, Some(region)),
+        None => (lang, None),
+    };
+    !base.eq_ignore_ascii_case("all") // yt-dlp's "every language"
+        && (2..=3).contains(&base.len())
+        && base.bytes().all(|b| b.is_ascii_alphabetic())
+        && region.is_none_or(|r| {
+            (2..=8).contains(&r.len()) && r.bytes().all(|b| b.is_ascii_alphanumeric())
+        })
+}
+
+/// The last non-empty line of yt-dlp's stderr, trimmed.
+fn last_line(stderr: &str) -> Option<&str> {
+    stderr.lines().map(str::trim).rfind(|line| !line.is_empty())
+}
+
+/// Removes the directory when dropped, also when the request is cancelled.
+struct TempDir(PathBuf);
+
+impl Drop for TempDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+async fn transcript(id: &str, lang: &str, yt_dlp: Option<&Path>) -> Result<Page, ToolError> {
+    let lang = if lang.is_empty() { "en" } else { lang };
+    if !valid_lang(lang) {
+        let message = "lang must be a language code such as en or pt-BR";
+        return Err(ToolError::new("invalid_request", message));
+    }
+    let needs = "YouTube transcripts need yt-dlp on PATH";
+    let Some(program) = yt_dlp else {
+        return Err(ToolError::new(
+            "transcript_unavailable",
+            format!("{needs}; yt-dlp was not found"),
+        ));
+    };
+    match with_yt_dlp(program, id, lang).await {
+        Ok(Some((video, cues))) => transcript_page(&video, merge(cues)),
+        Ok(None) => Err(ToolError::new(
+            "transcript_unavailable",
+            format!("{needs}; yt-dlp ran but could not read this video"),
+        )),
+        Err(message) => Err(ToolError::new("transcript_unavailable", message)),
+    }
+}
+
+/// `Err` is yt-dlp's own failure message; `Ok(None)` is any other failure.
+async fn with_yt_dlp(
+    program: &Path,
+    id: &str,
+    lang: &str,
+) -> Result<Option<(Video, Vec<Cue>)>, String> {
+    static COUNT: AtomicU64 = AtomicU64::new(0);
+    let name = format!(
+        "anyfetch-yt-{}-{}",
+        std::process::id(),
+        COUNT.fetch_add(1, Ordering::Relaxed)
+    );
+    let dir = TempDir(std::env::temp_dir().join(name));
+    if tokio::fs::create_dir_all(&dir.0).await.is_err() {
+        return Ok(None);
+    }
+    run_yt_dlp(program, id, lang, &dir.0).await
+}
+
+/// Has yt-dlp write the video's data and captions into `dir`, and reads them. The `-orig`
+/// language is where YouTube keeps the automatic captions of some videos.
+async fn run_yt_dlp(
+    program: &Path,
+    id: &str,
+    lang: &str,
+    dir: &Path,
+) -> Result<Option<(Video, Vec<Cue>)>, String> {
+    let languages = format!("{lang},{lang}-orig");
+    let address = format!("https://www.youtube.com/watch?v={id}");
+    let run = tokio::process::Command::new(program)
+        .args([
+            "--quiet",
+            "--no-warnings",
+            "--skip-download",
+            "--no-playlist",
+        ])
+        .args(["--write-info-json", "--write-subs", "--write-auto-subs"])
+        .args(["--sub-format", "json3", "--sub-langs", &languages, "-o"])
+        .arg(dir.join("v"))
+        .args(["--", &address])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .output();
+    let Ok(Ok(output)) = tokio::time::timeout(YT_DLP_TIMEOUT, run).await else {
+        return Ok(None);
+    };
+    if !output.status.success() {
+        let tail = &output.stderr[output.stderr.len().saturating_sub(STDERR_CAP)..];
+        let stderr = String::from_utf8_lossy(tail);
+        let reason = last_line(&stderr).unwrap_or("no error output");
+        return Err(format!("yt-dlp failed ({}): {reason}", output.status));
+    }
+    Ok(read_output(lang, dir).await)
+}
+
+/// Reads what yt-dlp wrote into `dir`.
+async fn read_output(lang: &str, dir: &Path) -> Option<(Video, Vec<Cue>)> {
+    let bytes = tokio::fs::read(dir.join("v.info.json")).await.ok()?;
+    let info: Value = serde_json::from_slice(&bytes).ok()?;
+    let video = Video {
+        title: info["title"].as_str()?.to_owned(),
+        channel: text(if info["channel"].is_string() {
+            &info["channel"]
+        } else {
+            &info["uploader"]
+        }),
+        seconds: info["duration"].as_f64().unwrap_or_default() as u64,
+    };
+    // Manual captions are written under the plain language, automatic ones under either.
+    let files = [format!("v.{lang}.json3"), format!("v.{lang}-orig.json3")];
+    let mut captions = None;
+    for file in &files {
+        if let Ok(bytes) = tokio::fs::read(dir.join(file)).await {
+            captions = Some(bytes);
+            break;
+        }
+    }
+    let data = captions.and_then(|bytes| serde_json::from_slice(&bytes).ok());
+    Some((video, data.map(|data| cues(&data)).unwrap_or_default()))
+}
+
+/// The cues of a json3 caption file, with their text on one line.
+fn cues(data: &Value) -> Vec<Cue> {
+    let events = data["events"].as_array().into_iter().flatten();
+    events
+        .filter_map(|event| {
+            let segs = event["segs"].as_array()?;
+            let words: String = segs.iter().filter_map(|seg| seg["utf8"].as_str()).collect();
+            let words = words.split_whitespace().collect::<Vec<_>>().join(" ");
+            (!words.is_empty()).then(|| Cue {
+                start_ms: event["tStartMs"].as_u64().unwrap_or_default(),
+                text: words,
+            })
+        })
+        .collect()
+}
+
+/// Joins cues into lines of about [`LINE_MS`], so a line is not a few words.
+fn merge(cues: Vec<Cue>) -> Vec<Cue> {
+    let mut lines: Vec<Cue> = Vec::new();
+    for cue in cues {
+        match lines.last_mut() {
+            Some(line) if cue.start_ms.saturating_sub(line.start_ms) < LINE_MS => {
+                line.text.push(' ');
+                line.text.push_str(&cue.text);
+            }
+            _ => lines.push(cue),
+        }
+    }
+    lines
+}
+
+/// `mm:ss`, or `h:mm:ss` from one hour.
+fn clock(milliseconds: u64) -> String {
+    let seconds = milliseconds / 1000;
+    let (hours, minutes, seconds) = (seconds / 3600, seconds / 60 % 60, seconds % 60);
+    if hours > 0 {
+        format!("{hours}:{minutes:02}:{seconds:02}")
+    } else {
+        format!("{minutes:02}:{seconds:02}")
+    }
+}
+
+fn transcript_page(video: &Video, lines: Vec<Cue>) -> Result<Page, ToolError> {
+    if lines.is_empty() {
+        let message = "The video has no captions in that language";
+        return Err(ToolError::new("transcript_unavailable", message));
+    }
+    let duration = (video.seconds > 0).then(|| clock(video.seconds * 1000));
+    let about = [
+        Some(video.channel.clone()).filter(|name| !name.is_empty()),
+        duration,
+    ];
+    let about = about.into_iter().flatten().collect::<Vec<_>>().join(", ");
+    let lines = lines
+        .iter()
+        .map(|line| format!("[{}] {}", clock(line.start_ms), line.text));
+    let content = [
+        format!("# {}", video.title),
+        about,
+        lines.collect::<Vec<_>>().join("\n"),
+    ];
+    let content: Vec<_> = content.iter().filter(|part| !part.is_empty()).collect();
+    Ok(Page {
+        title: video.title.clone(),
+        content: content
+            .iter()
+            .map(|part| part.as_str())
+            .collect::<Vec<_>>()
+            .join("\n\n"),
+        source: None,
     })
 }
 
@@ -580,6 +863,39 @@ mod tests {
     use serde_json::json;
 
     #[test]
+    fn lang_validator() {
+        for ok in ["en", "es", "pt-BR", "zh-Hans", "fil", "es-419"] {
+            assert!(valid_lang(ok), "{ok}");
+        }
+        for bad in [
+            "",
+            "all",
+            "e",
+            "en-",
+            "en-x",
+            "en_US",
+            "en,fr",
+            "-en",
+            "en-abcdefghi",
+            "e1",
+            "--all",
+        ] {
+            assert!(!valid_lang(bad), "{bad}");
+        }
+    }
+
+    #[test]
+    fn stderr_last_line() {
+        let text = "WARNING: x\nERROR: [youtube] xyz: Video unavailable  \n\n  \n";
+        assert_eq!(
+            last_line(text),
+            Some("ERROR: [youtube] xyz: Video unavailable")
+        );
+        assert_eq!(last_line(" \n\n"), None);
+        assert_eq!(last_line(""), None);
+    }
+
+    #[test]
     fn routes_known_pages_to_their_public_endpoint() {
         let route = |url: &str| route(&Url::parse(url).unwrap());
         for (url, expected) in [
@@ -769,6 +1085,77 @@ mod tests {
         );
         assert_eq!(same_page("https://www.amazon.com/dp/B000"), None);
         assert_eq!(same_page("https://example.org/"), None);
+    }
+
+    #[test]
+    fn finds_the_video_id_of_a_youtube_address() {
+        let id = |url: &str| youtube_id(&Url::parse(url).unwrap());
+        let some = Some("jNQXAC9IVRw".to_owned());
+        for url in [
+            "https://www.youtube.com/watch?v=jNQXAC9IVRw",
+            "https://www.youtube.com/watch?feature=share&v=jNQXAC9IVRw&t=5",
+            "https://m.youtube.com/watch?v=jNQXAC9IVRw",
+            "https://music.youtube.com/watch?v=jNQXAC9IVRw",
+            "https://youtu.be/jNQXAC9IVRw?si=x",
+            "https://www.youtube.com/shorts/jNQXAC9IVRw",
+        ] {
+            assert_eq!(id(url), some, "{url}");
+        }
+        for url in [
+            "https://www.youtube.com/",
+            "https://www.youtube.com/watch",
+            "https://www.youtube.com/watch?v=short",
+            "https://www.youtube.com/watch?v=--help&&&&&&",
+            "https://www.youtube.com/playlist?list=PL1",
+            "https://example.org/watch?v=jNQXAC9IVRw",
+        ] {
+            assert_eq!(id(url), None, "{url}");
+        }
+        assert!(is_youtube("https://youtu.be/jNQXAC9IVRw"));
+        assert!(!is_youtube("not a url"));
+    }
+
+    #[test]
+    fn turns_captions_into_timed_lines() {
+        let data = json!({"events": [
+            {"tStartMs": 0, "dDurationMs": 100},
+            {"tStartMs": 1200, "segs": [{"utf8": "All right, so here we are,"}, {"utf8": " in front\nof the"}]},
+            {"tStartMs": 5000, "segs": [{"utf8": "\n"}]},
+            {"tStartMs": 8000, "segs": [{"utf8": "elephants"}]},
+            {"tStartMs": 21200, "segs": [{"utf8": "Next line"}]},
+            {"tStartMs": 3_725_000, "segs": [{"utf8": "Much later"}]}
+        ]});
+        let found = cues(&data);
+        assert_eq!(found.len(), 4);
+        assert_eq!(found[0].text, "All right, so here we are, in front of the");
+        let lines = merge(found);
+        let lines: Vec<_> = lines
+            .iter()
+            .map(|line| (line.start_ms, &*line.text))
+            .collect();
+        assert_eq!(
+            lines,
+            [
+                (1200, "All right, so here we are, in front of the elephants"),
+                (21200, "Next line"),
+                (3_725_000, "Much later")
+            ]
+        );
+        assert_eq!(clock(65_000), "01:05");
+        assert_eq!(clock(3_725_000), "1:02:05");
+        let video = Video {
+            title: "Me at the zoo".into(),
+            channel: "jawed".into(),
+            seconds: 19,
+        };
+        let page = transcript_page(&video, merge(cues(&data))).unwrap();
+        assert!(
+            page.content
+                .starts_with("# Me at the zoo\n\njawed, 00:19\n\n[00:01] All right")
+        );
+        assert!(page.content.ends_with("[1:02:05] Much later"));
+        let error = transcript_page(&video, Vec::new()).err().unwrap();
+        assert_eq!(error.code, "transcript_unavailable");
     }
 
     #[test]
