@@ -2,10 +2,15 @@ use anyfetch::fetch::fetch;
 use std::{
     io::{BufRead, BufReader, Write},
     net::TcpListener,
+    sync::Once,
     thread::{self, JoinHandle},
 };
 
+static ALLOW_PRIVATE: Once = Once::new();
+
 fn serve(responses: Vec<impl AsRef<[u8]> + Send + 'static>) -> (String, JoinHandle<Vec<String>>) {
+    // SAFETY: set once before any request is made; Once blocks the other test threads until done.
+    ALLOW_PRIVATE.call_once(|| unsafe { std::env::set_var("ANYFETCH_ALLOW_PRIVATE", "1") });
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
     let worker = thread::spawn(move || {

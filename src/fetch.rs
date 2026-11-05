@@ -5,6 +5,7 @@ use encoding_rs::{Encoding, UTF_8};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{
+    borrow::Cow,
     collections::HashSet,
     path::{Path, PathBuf},
 };
@@ -201,12 +202,7 @@ async fn download(url: &str, options: Options<'_>) -> Result<FetchResponse, Tool
         }
         (document.title, None, content.join("\n\n"))
     } else {
-        let encoding = Encoding::for_bom(&bytes)
-            .map(|(encoding, _)| encoding)
-            .or_else(|| mime.as_ref().and_then(charset))
-            .or_else(|| if is_html { html_charset(&bytes) } else { None })
-            .unwrap_or(UTF_8);
-        let (body, _, _) = encoding.decode(&bytes);
+        let body = decode(&bytes, mime.as_ref(), is_html);
         if is_html {
             let own = alternates::parse(&final_url, &body).map(|page| Extracted {
                 title: page.title,
@@ -216,23 +212,29 @@ async fn download(url: &str, options: Options<'_>) -> Result<FetchResponse, Tool
             });
             let mut extracted = own.map_or_else(|| extract(&body, &final_url), Ok);
             // A page with no article and no data needs its scripts. Run them when a renderer
-            // is installed; it makes its own request, so not behind a proxy.
+            // is installed; it makes its own request, so not behind a proxy. Only the page address
+            // is checked: its scripts can still reach other hosts.
             let shell = extracted.as_ref().map_or(true, |page| page.summary_only);
-            if shell
-                && let Some(renderer) = options.renderer
-                && transport::direct()
-                && let Some(html) = render::render(renderer, &final_url).await
-                && let Some(page) = extract_rendered(&html, &final_url)
-                && page.content.len() > extracted.as_ref().map_or(0, |plain| plain.content.len())
-            {
-                extracted = Ok(page);
+            if shell && let Some(renderer) = options.renderer {
+                let allowed = transport::direct() && transport::resolves_public(&final_url).await;
+                let rendered = if allowed {
+                    render::render(renderer, &final_url).await
+                } else {
+                    None
+                };
+                if let Some(html) = rendered {
+                    let page = extract_rendered(&html, &final_url);
+                    let plain = extracted.as_ref().map_or(0, |plain| plain.content.len());
+                    // A page that scripts did not fill stays as it was.
+                    if let Some(page) = page
+                        && page.content.len() > plain
+                    {
+                        extracted = Ok(page);
+                    }
+                }
             }
-            let extracted = extracted?;
-            (
-                Some(extracted.title),
-                extracted.description,
-                extracted.content,
-            )
+            let page = extracted?;
+            (Some(page.title), page.description, page.content)
         } else {
             (None, None, body.into_owned())
         }
@@ -259,6 +261,15 @@ fn supported(media_type: &str) -> bool {
         )
         || media_type.ends_with("+json")
         || media_type.ends_with("+xml")
+}
+
+fn decode<'a>(bytes: &'a [u8], mime: Option<&mime::Mime>, is_html: bool) -> Cow<'a, str> {
+    let encoding = Encoding::for_bom(bytes)
+        .map(|(encoding, _)| encoding)
+        .or_else(|| mime.and_then(charset))
+        .or_else(|| if is_html { html_charset(bytes) } else { None })
+        .unwrap_or(UTF_8);
+    encoding.decode(bytes).0
 }
 
 fn charset(mime: &mime::Mime) -> Option<&'static Encoding> {

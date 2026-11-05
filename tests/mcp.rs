@@ -17,6 +17,7 @@ impl Session {
     async fn start() -> Self {
         let mut child = Command::new(env!("CARGO_BIN_EXE_anyfetch"))
             .arg("mcp")
+            .env("ANYFETCH_ALLOW_PRIVATE", "1")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())

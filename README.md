@@ -238,7 +238,7 @@ The result has `pages`: one entry per URL, in order. Each entry is the page, or 
 | `time` | Optional. `day`, `week`, `month` or `year`. |
 | `page` | Optional. The result page, from 1. |
 | `read` | Optional. Also return, from this many top results, the parts of each page that match the query. |
-| `searxng_url` | The base URL of your SearXNG instance, for the `searxng` provider. It must have JSON output on. |
+| `searxng_url` | The base URL of your SearXNG instance, for the `searxng` provider. It must have JSON output on. It may be on this machine or your network, such as `http://localhost:8888`, also without `ANYFETCH_ALLOW_PRIVATE=1`. |
 
 Each result has `title`, `url` and `snippet`, and `content` when you set `read`.
 
@@ -269,6 +269,15 @@ A failed call returns an `error` object with a `code` the agent can act on:
 | `timeout` | The site did not answer within 30 seconds. |
 | `unsupported_content` | The URL is not text or a PDF (an image, for example). |
 | `extraction_failed` | The page has no readable content. A scanned PDF has no text. |
+| `blocked_address` | The URL, a redirect or the name's address leads to a link-local or cloud metadata address, or to a local or private network without `ANYFETCH_ALLOW_PRIVATE=1`. |
+
+### Local addresses
+
+By default, `web_fetch` reads only public sites. It refuses this machine (`localhost`, `127.0.0.1`) and private networks (`10.x`, `192.168.x` and similar), also when a public name or a redirect leads there. It always refuses link-local and cloud metadata addresses, such as `169.254.169.254`. The Cloudflare browser and the JavaScript renderer open only public sites.
+
+| Setting | Effect |
+| --- | --- |
+| `ANYFETCH_ALLOW_PRIVATE=1` | Also allows this machine and private networks. Link-local and cloud metadata addresses stay blocked. A SearXNG instance may be local or private without it. |
 
 ## Cloudflare checks
 

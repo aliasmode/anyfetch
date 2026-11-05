@@ -68,6 +68,19 @@ impl From<wreq::Error> for ToolError {
         if error.is_timeout() {
             return Self::new("timeout", "The site did not answer within 30 seconds");
         }
-        Self::new("network_error", error.to_string())
+        // A redirect or name refused by the address guard hides its error in the source chain.
+        let mut message = error.to_string();
+        let mut source = std::error::Error::source(&error);
+        while let Some(cause) = source {
+            if let Some(inner) = cause.downcast_ref::<ToolError>() {
+                return Self::new(inner.code, inner.message.clone());
+            }
+            let cause_text = cause.to_string();
+            if !message.contains(&cause_text) {
+                message = format!("{message}: {cause_text}");
+            }
+            source = cause.source();
+        }
+        Self::new("network_error", message)
     }
 }
