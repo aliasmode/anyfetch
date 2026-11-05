@@ -30,7 +30,7 @@ pub(crate) fn put(page: &FetchResponse) {
 }
 
 fn file(directory: &Path, url: &str) -> PathBuf {
-    directory.join(format!("{:x}.json", Sha256::digest(url)))
+    directory.join(format!("{}.json", crate::hex(&Sha256::digest(url))))
 }
 
 fn read(directory: &Path, url: &str) -> Option<FetchResponse> {
