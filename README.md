@@ -196,6 +196,7 @@ anyfetch fetch https://arxiv.org/pdf/1706.03762 --max-chars 8000 --offset 8000
 anyfetch fetch https://docs.python.org/3.15/whatsnew/3.15.html --query "sampling profiler rate"
 anyfetch fetch https://www.rust-lang.org/ https://go.dev/ https://ziglang.org/
 anyfetch fetch https://news.ycombinator.com/ --content html --selector ".titleline > a"
+anyfetch fetch https://api.github.com/repos/rust-lang/rust --selector "{name, stars: .stargazers_count}"
 ```
 
 Output is JSON by default, so scripts and agents can parse it. `--format markdown` prints only the page content. `--content` and `--selector` are the `format` and `selector` inputs of `web_fetch`; `search --read` takes them too.
@@ -211,8 +212,8 @@ Output is JSON by default, so scripts and agents can parse it. `--format markdow
 | `max_chars` | Optional. The most content characters to return. The default is 50,000, or 5,000 with a `query`. |
 | `offset` | Optional. The first content character to return. Not used with a `query`. |
 | `fresh` | Optional. Fetch again even if a copy from the last 15 minutes exists. |
-| `format` | Optional. `readable` (default): the article as Markdown. `markdown`: the whole page as Markdown. `text`: plain text, a line per block, no links. `html`: the HTML as served, or as rendered when the page needs scripts and a renderer is installed. `json`: the body as JSON, from any content type, pretty-printed; `not_json` if it does not parse. |
-| `selector` | Optional. Keep only part of an HTML page: a CSS selector, all matches in page order (`readable` then gives Markdown). Ignored on pages that are not HTML: they come back whole. An empty string means not set. |
+| `format` | Optional. `readable` (default): the article as Markdown. `markdown`: the whole page as Markdown. `text`: plain text, a line per block, no links. `html`: the HTML as served, or as rendered when the page needs scripts and a renderer is installed. `json`: the body as JSON, from any content type, run through `jq .`; `not_json` if it does not parse. |
+| `selector` | Optional. Keep only part of the page. On HTML, a CSS selector: all matches in page order (`readable` then gives Markdown). On JSON, a jq program run by [jaq](https://github.com/01mf02/jaq): one result is returned as is, several as an array. Without `env`, `input` or `debug`. Limits: 15 seconds, 1 GB of memory, input nesting depth 256. Ignored on other pages that are not HTML: they come back whole. An empty string means not set. |
 
 The result has `title`, `description`, `content` (Markdown unless `format` says otherwise), `total_chars`, `url` (after redirects), `status` and `retrieved_at`. To read a long page in parts, call again with a higher `offset` until it reaches `total_chars`. The parts come from the local copy, so the site gets one request.
 

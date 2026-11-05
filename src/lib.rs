@@ -5,6 +5,8 @@ mod challenge;
 pub mod clearance;
 pub mod fetch;
 mod focus;
+#[doc(hidden)]
+pub mod jq;
 pub mod mcp;
 mod pdf;
 pub mod render;

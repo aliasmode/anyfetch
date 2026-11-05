@@ -34,7 +34,7 @@ pub(crate) const TIMEOUT: Duration = Duration::from_secs(30);
 const FIREFOX: (Profile, Platform) = (Profile::Firefox151, Platform::Linux);
 
 /// The largest answer read into memory.
-const MAX_BODY: usize = 20 * 1024 * 1024;
+pub(crate) const MAX_BODY: usize = 20 * 1024 * 1024;
 
 fn client(
     (profile, platform): (Profile, Platform),

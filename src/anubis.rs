@@ -69,7 +69,7 @@ pub(crate) fn parse(html: &str) -> Result<Option<Challenge>, ToolError> {
 const DEADLINE: Duration = Duration::from_secs(30);
 
 /// Tells blocking work to stop when the async side that waits for it goes away.
-struct CancelOnDrop(Arc<AtomicBool>);
+pub(crate) struct CancelOnDrop(pub(crate) Arc<AtomicBool>);
 
 impl Drop for CancelOnDrop {
     fn drop(&mut self) {
