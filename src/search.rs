@@ -311,7 +311,11 @@ async fn ask(
 ) -> Result<SearchResponse, ToolError> {
     let result = async {
         let url = provider.url(query, searxng_url, filters)?;
-        let response = transport::get(url.as_str(), |_| true).await?;
+        let response = match provider {
+            // The user's own instance often runs on this machine or its network.
+            Provider::Searxng => transport::get_local(url.as_str(), |_| true).await?,
+            _ => transport::get(url.as_str(), |_| true).await?,
+        };
         let body = response.text();
         let mut results = match provider {
             Provider::Auto => unreachable!("auto is resolved to an engine before a request"),
