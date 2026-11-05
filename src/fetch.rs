@@ -85,10 +85,73 @@ pub enum Format {
     Markdown,
     // The words of the page, a line for each block, without Markdown or link targets.
     Text,
-    // The HTML as served, or as rendered when the page needs scripts and a renderer is installed.
+    // The HTML as served, or as rendered when render applies.
     Html,
     // The body parsed as JSON, pretty-printed.
     Json,
+}
+
+/// Whether to run a page's scripts in the renderer before reading it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, schemars::JsonSchema)]
+#[serde(from = "RenderRepr")]
+#[schemars(with = "RenderRepr")]
+pub enum Render {
+    /// Only a page that is just scripts, and only if a renderer is installed.
+    #[default]
+    Auto,
+    /// Every HTML page. An error if no renderer is installed.
+    On,
+    /// Never.
+    Off,
+}
+
+/// How `render` is written: true, false or "auto" (the strings "true" and "false" too).
+#[derive(Deserialize, schemars::JsonSchema)]
+#[serde(untagged)]
+enum RenderRepr {
+    Flag(bool),
+    Word(RenderWord),
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "lowercase")]
+enum RenderWord {
+    Auto,
+    True,
+    False,
+}
+
+impl From<RenderRepr> for Render {
+    fn from(repr: RenderRepr) -> Self {
+        match repr {
+            RenderRepr::Flag(true) | RenderRepr::Word(RenderWord::True) => Self::On,
+            RenderRepr::Flag(false) | RenderRepr::Word(RenderWord::False) => Self::Off,
+            RenderRepr::Word(RenderWord::Auto) => Self::Auto,
+        }
+    }
+}
+
+impl std::str::FromStr for Render {
+    type Err = String;
+
+    fn from_str(text: &str) -> Result<Self, String> {
+        match text.to_ascii_lowercase().as_str() {
+            "auto" => Ok(Self::Auto),
+            "true" => Ok(Self::On),
+            "false" => Ok(Self::Off),
+            _ => Err(format!("expected true, false or auto, not {text}")),
+        }
+    }
+}
+
+impl Render {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::On => "true",
+            Self::Off => "false",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Default)]
@@ -111,6 +174,8 @@ pub struct Options<'a> {
     /// A CSS selector for an HTML page, or a jq program (jaq) for JSON: keep only what matches.
     /// Ignored on other pages that are not HTML.
     pub selector: Option<&'a str>,
+    /// Run the page's scripts in the renderer: see [`Render`].
+    pub render: Render,
 }
 
 /// The helper programs found on this machine.
@@ -136,6 +201,7 @@ impl Helpers {
         format: Format,
         selector: Option<&'a str>,
         lang: Option<&'a str>,
+        render: Render,
     ) -> Options<'a> {
         Options {
             browser: self.browser.as_deref(),
@@ -146,6 +212,7 @@ impl Helpers {
             fresh,
             format,
             selector,
+            render,
         }
     }
 }
@@ -159,12 +226,13 @@ pub fn non_empty(text: Option<&str>) -> Option<&str> {
 /// that changes the processed content (JSON quoting keeps the parts from running together).
 fn cache_key(url: &str, options: &Options<'_>) -> String {
     let readable = options.format == Format::Readable && options.selector.is_none();
-    if readable && !alternates::is_youtube(url) {
+    if readable && options.render == Render::Auto && !alternates::is_youtube(url) {
         return url.to_owned();
     }
     let lang = (readable && alternates::is_youtube(url)).then(|| options.lang.unwrap_or("en"));
     let selector = non_empty(options.selector);
-    serde_json::to_string(&(url, options.format, selector, lang)).expect("a key serializes")
+    serde_json::to_string(&(url, options.format, selector, options.render.as_str(), lang))
+        .expect("a key serializes")
 }
 
 pub async fn fetch(url: &str) -> Result<FetchResponse, ToolError> {
@@ -300,6 +368,13 @@ async fn download(url: &str, options: Options<'_>) -> Result<FetchResponse, Tool
     } else {
         let mut body = decode(&bytes, mime.as_ref(), is_html);
         if is_html {
+            let forced = options.render == Render::On;
+            if forced && options.renderer.is_none() {
+                return Err(ToolError::new(
+                    "renderer_missing",
+                    "render is true, but no renderer is installed; install Lightpanda or set ANYFETCH_RENDERER",
+                ));
+            }
             let own = readable
                 .then(|| alternates::parse(&final_url, &body))
                 .flatten()
@@ -310,7 +385,7 @@ async fn download(url: &str, options: Options<'_>) -> Result<FetchResponse, Tool
                     summary_only: false,
                 });
             // Readability is needed for the article, and to tell a page that is only scripts.
-            let detect = options.renderer.is_some();
+            let detect = options.renderer.is_some() && options.render == Render::Auto;
             let mut extracted =
                 (readable || detect).then(|| own.map_or_else(|| extract(&body, &final_url), Ok));
             // A page with no article and no data needs its scripts. Run them when a renderer
@@ -319,24 +394,44 @@ async fn download(url: &str, options: Options<'_>) -> Result<FetchResponse, Tool
             let shell = extracted
                 .as_ref()
                 .is_some_and(|plain| plain.as_ref().map_or(true, |page| page.summary_only));
-            if shell && let Some(renderer) = options.renderer {
+            let wanted = match options.render {
+                Render::Off => false,
+                Render::On => true,
+                Render::Auto => shell,
+            };
+            if wanted && let Some(renderer) = options.renderer {
                 let allowed = transport::direct() && transport::resolves_public(&final_url).await;
+                if !allowed && forced {
+                    return Err(ToolError::new(
+                        "blocked_address",
+                        "render is true, but the page cannot be rendered: its address is not public, or requests go through a proxy",
+                    ));
+                }
                 let rendered = if allowed {
                     render::render(renderer, &final_url).await
                 } else {
                     None
                 };
+                if forced && rendered.is_none() {
+                    return Err(ToolError::new(
+                        "render_failed",
+                        "The renderer returned no page",
+                    ));
+                }
                 if let Some(html) = rendered {
-                    let page = extract_rendered(&html, &final_url);
+                    let page = (readable || !forced)
+                        .then(|| extract_rendered(&html, &final_url))
+                        .flatten();
                     let plain = extracted
                         .as_ref()
                         .and_then(|plain| plain.as_ref().ok())
                         .map_or(0, |plain| plain.content.len());
-                    // A page that scripts did not fill stays as it was.
-                    if let Some(page) = page
-                        && page.content.len() > plain
-                    {
-                        extracted = Some(Ok(page));
+                    // A page that scripts did not fill stays as it was, unless render is true.
+                    let better = page.as_ref().is_some_and(|page| page.content.len() > plain);
+                    if forced || better {
+                        if let Some(page) = page {
+                            extracted = Some(Ok(page));
+                        }
                         body = Cow::Owned(html);
                     }
                 }
@@ -969,22 +1064,45 @@ mod tests {
         </body></html>";
 
     #[test]
+    fn parses_render_modes() {
+        let parse = |text: &str| serde_json::from_str::<Render>(text).unwrap();
+        assert_eq!(parse("true"), Render::On);
+        assert_eq!(parse("false"), Render::Off);
+        assert_eq!(parse("\"auto\""), Render::Auto);
+        assert_eq!(parse("\"true\""), Render::On);
+        assert_eq!(parse("\"false\""), Render::Off);
+        assert!(serde_json::from_str::<Render>("\"maybe\"").is_err());
+        assert_eq!("TRUE".parse(), Ok(Render::On));
+        assert_eq!("auto".parse(), Ok(Render::Auto));
+        assert!("x".parse::<Render>().is_err());
+        assert_eq!(Render::default(), Render::Auto);
+    }
+
+    #[test]
     fn cache_keys_do_not_collide() {
         let url = "https://example.com/a";
-        let with = |format, selector| Options {
+        let with = |format, selector, render| Options {
             format,
             selector,
+            render,
             ..Options::default()
         };
         assert_eq!(cache_key(url, &Options::default()), url);
-        let one = cache_key(url, &with(Format::Text, Some("a\nb")));
-        let two = cache_key(url, &with(Format::Text, Some("a")));
+        let one = cache_key(url, &with(Format::Text, Some("a\nb"), Render::Auto));
+        let two = cache_key(url, &with(Format::Text, Some("a"), Render::Auto));
         assert_ne!(one, two);
+        let plain = cache_key(url, &with(Format::Readable, None, Render::Auto));
+        let rendered = cache_key(url, &with(Format::Readable, None, Render::On));
+        assert_ne!(plain, rendered);
+        assert_ne!(
+            cache_key(url, &with(Format::Html, None, Render::Auto)),
+            cache_key(url, &with(Format::Html, None, Render::Off))
+        );
         // A selector holding what used to be the next part of the key.
-        let tricky = cache_key(url, &with(Format::Html, Some("x")));
+        let tricky = cache_key(url, &with(Format::Html, Some("x"), Render::Auto));
         let split = cache_key(
             "https://example.com/a\nHtml",
-            &with(Format::Html, Some("x")),
+            &with(Format::Html, Some("x"), Render::Auto),
         );
         assert_ne!(tricky, split);
     }
