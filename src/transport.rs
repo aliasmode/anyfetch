@@ -395,7 +395,9 @@ pub fn check_response(response: &Response) -> Result<(), ToolError> {
     let challenge = headers
         .get("cf-mitigated")
         .is_some_and(|value| value == "challenge")
-        || headers.contains_key("x-amzn-waf-action");
+        || headers.contains_key("x-amzn-waf-action")
+        // LinkedIn sends its sign-in wall with this status.
+        || status == 999;
     let code = if challenge {
         "challenge_required"
     } else if status == 429 {

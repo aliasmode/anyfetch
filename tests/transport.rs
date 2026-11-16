@@ -241,6 +241,7 @@ async fn challenge_header_is_not_a_successful_fetch() {
     for (status, header) in [
         ("200 OK", "cf-mitigated: challenge"),
         ("202 Accepted", "x-amzn-waf-action: challenge"),
+        ("999 Request Denied", "x-li-uuid: 0"),
     ] {
         let (url, worker) = serve(vec![format!(
             "HTTP/1.1 {status}\r\n{header}\r\nContent-Type: text/html\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"

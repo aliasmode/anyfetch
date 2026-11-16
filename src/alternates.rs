@@ -251,8 +251,127 @@ pub(crate) fn parse(url: &str, html: &str) -> Option<Page> {
     let url = Url::parse(url).ok()?;
     match url.host_str()?.trim_start_matches("www.") {
         "quora.com" => quora_page(html),
+        host if linkedin(host) && url.path().starts_with("/in/") => linkedin_profile(html),
         _ => None,
     }
+}
+
+/// LinkedIn, or one of its country names such as `uk.linkedin.com`.
+fn linkedin(host: &str) -> bool {
+    host == "linkedin.com" || host.ends_with(".linkedin.com")
+}
+
+/// A LinkedIn profile as a visitor without an account gets it. The general extractor keeps the
+/// titles of its sections and drops the lists below them.
+fn linkedin_profile(html: &str) -> Option<Page> {
+    let document = Document::from(html);
+    let line = |text: &str| text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let top = |selector: &str| line(&document.select(selector).text());
+    let name = top("h1.top-card-layout__title");
+    if name.is_empty() {
+        return None;
+    }
+    let facts = ".profile-info-subheader > span, \
+                 .top-card-layout__first-subline .not-first-middot > span, \
+                 [data-section$=\"sDetails\"] .top-card-link__description";
+    let facts = document.select(facts).iter().map(|fact| line(&fact.text()));
+    let facts: Vec<String> = facts.filter(|fact| !fact.is_empty()).collect();
+    let mut parts = vec![top("h2.top-card-layout__headline"), facts.join(" · ")];
+    // Sign-in windows and controls. A long text is there twice: cut short and in full.
+    let noise = ".modal, button, code, icon, img, .sr-only, \
+                 .profile-section-card__image-link";
+    document.select(noise).remove();
+    for text in document.select(".show-more-less-text").iter() {
+        if text.select(".show-more-less-text__text--more").exists() {
+            text.select(".show-more-less-text__text--less").remove();
+        }
+    }
+    document
+        .select(r#"[class~="before:middot"]"#)
+        .prepend_html("· ");
+    // The other authors of a work are pictures. Their names are in the titles of the links.
+    for face in document.select(".face-pile__url").iter() {
+        face.set_text(&face.attr("title").unwrap_or_default());
+    }
+    document.select("a").remove_attr("title");
+    for section in document.select("section[data-section]").iter() {
+        let title = line(&section.select("h2").first().text());
+        let kind = section.attr("data-section").unwrap_or_default();
+        // The posts and articles are read from the data of the page, below.
+        if title.is_empty() || matches!(&*kind, "posts" | "articles") {
+            continue;
+        }
+        let cards = section.select("li.profile-section-card");
+        let items = section.select("li");
+        let body = if cards.exists() {
+            let cards = cards.iter().map(|card| {
+                let title = line(&card.select("h3").text());
+                let place = line(&card.select("h4").text());
+                card.select("h3, h4").remove();
+                let rest = markdown(&card.inner_html());
+                let rest: Vec<String> = rest.lines().map(line).collect();
+                let rest = rest.iter().filter(|text| text.len() > 1);
+                let rest: String = rest.map(|text| format!("\n  {text}")).collect();
+                let place = Some(place).filter(|place| place.len() > 1);
+                let place = place.map_or_else(String::new, |place| format!(", {place}"));
+                format!("- **{title}**{place}{rest}")
+            });
+            cards.collect::<Vec<_>>().join("\n")
+        } else if items.exists() {
+            let items = items.iter().map(|item| format!("- {}", line(&item.text())));
+            items.collect::<Vec<_>>().join("\n")
+        } else {
+            markdown(
+                &section
+                    .select(".core-section-container__content")
+                    .inner_html(),
+            )
+        };
+        parts.push(format!("## {title}\n\n{body}"));
+    }
+    let data = document
+        .select(r#"script[type="application/ld+json"]"#)
+        .text();
+    let data: Value = serde_json::from_str(&data).unwrap_or_default();
+    let graph = data["@graph"].as_array().map_or(&[][..], Vec::as_slice);
+    let of = |kind: &'static str| graph.iter().filter(move |node| node["@type"] == kind);
+    let day = |node: &Value| {
+        text(&node["datePublished"])
+            .chars()
+            .take(10)
+            .collect::<String>()
+    };
+    let likes = |node: &Value| {
+        let likes = node["interactionStatistic"]["userInteractionCount"].as_u64();
+        likes.map_or_else(String::new, |likes| format!(", {likes} likes"))
+    };
+    let articles = of("Article").map(|node| {
+        let (title, url) = (text(&node["headline"]), text(&node["url"]));
+        format!("- [{title}]({url}), {}{}", day(node), likes(node))
+    });
+    let posts = of("DiscussionForumPosting").map(|node| {
+        let (author, url) = (text(&node["author"]["name"]), text(&node["url"]));
+        let post = text(&node["text"]);
+        line(&format!(
+            "- {author}, {}{}: {post} {url}",
+            day(node),
+            likes(node)
+        ))
+    });
+    for (title, list) in [
+        ("Articles", articles.collect::<Vec<_>>()),
+        ("Posts", posts.collect()),
+    ] {
+        if !list.is_empty() {
+            parts.push(format!("## {title}\n\n{}", list.join("\n")));
+        }
+    }
+    parts.retain(|part| !part.is_empty());
+    Some(Page {
+        title: format!("{name} | LinkedIn"),
+        content: parts.join("\n\n"),
+        source: None,
+    })
 }
 
 /// A Quora question page. Its scripts hold the question and the first answers as JSON
@@ -565,11 +684,23 @@ fn imdb_page(data: &Value) -> Option<Page> {
 }
 
 /// Another address of the same page, for a page whose usual address is behind a bot check.
-pub(crate) fn same_page(url: &str) -> Option<&'static str> {
-    let url = Url::parse(url).ok()?;
+pub(crate) fn same_page(url: &str) -> Option<String> {
+    let mut url = Url::parse(url).ok()?;
+    let host = url.host_str()?.trim_start_matches("www.");
     // The check of Amazon covers only the address of its home page.
-    let home = url.host_str()?.trim_start_matches("www.") == "amazon.com" && url.path() == "/";
-    home.then_some("https://www.amazon.com/ref=nav_logo")
+    if host == "amazon.com" && url.path() == "/" {
+        return Some("https://www.amazon.com/ref=nav_logo".to_owned());
+    }
+    // LinkedIn redirects the other spellings of a profile's address, and shows its sign-in
+    // wall to the visitor who follows: that visitor carries the cookies of the redirect.
+    if host == "linkedin.com" && url.path().starts_with("/in/") {
+        let path = url.path().trim_end_matches('/').to_owned();
+        url.set_path(&path);
+        url.set_host(Some("www.linkedin.com")).ok()?;
+        url.set_scheme("https").ok()?;
+        return Some(url.into());
+    }
+    None
 }
 
 #[cfg(test)]
@@ -706,6 +837,54 @@ mod tests {
     }
 
     #[test]
+    fn reads_a_linkedin_profile_without_the_sign_in_windows() {
+        let data = json!({"@graph": [
+            {"@type": "Person", "name": "Ada Lovelace"},
+            {"@type": "Article", "headline": "Notes", "url": "https://www.linkedin.com/pulse/notes",
+                "datePublished": "2026-01-02T03:04:05.000+00:00",
+                "interactionStatistic": {"userInteractionCount": 7}},
+            {"@type": "DiscussionForumPosting", "text": "First\nprogram", "author": {"name": "Ada Lovelace"},
+                "url": "https://www.linkedin.com/posts/ada_1", "datePublished": "2026-02-03T00:00:00.000+00:00"}
+        ]});
+        let html = format!(
+            r#"<script type="application/ld+json">{data}</script>
+            <h1 class="top-card-layout__title">Ada  Lovelace</h1>
+            <h2 class="top-card-layout__headline">Mathematician</h2>
+            <div class="profile-info-subheader"><span>London</span></div>
+            <div class="top-card-layout__first-subline"><span class="not-first-middot">
+              <span>9 followers</span></span></div>
+            <div data-section="currentPositionsDetails">
+              <span class="top-card-link__description">Analytical Engines <img alt></span></div>
+            <section data-section="summary"><h2>About</h2>
+              <div class="core-section-container__content"><p>I write programs.</p>
+                <div class="modal"><h2>Welcome back</h2><button>Sign in</button></div></div></section>
+            <section data-section="experience"><h2>Experience</h2><ul>
+              <li class="profile-section-card"><h3>Analyst</h3><h4>Analytical Engines</h4>
+                <span class="date-range">1842 - 1843</span>
+                <div class="show-more-less-text"><p class="show-more-less-text__text--less">The first…</p>
+                  <p class="show-more-less-text__text--more">The first program.</p></div>
+                <ul><li><a class="face-pile__url" href="https://uk.linkedin.com/in/cb" title="C. B."><img></a></li>
+                  <li><button>Show more</button></li></ul></li></ul></section>
+            <section data-section="skills"><h2>Skills</h2><ul><li>Mathematics</li></ul></section>
+            <section data-section="posts"><h2>Posts</h2><ul><li>Sign in to see</li></ul></section>"#
+        );
+        let page = parse("https://uk.linkedin.com/in/ada", &html).unwrap();
+        assert_eq!(page.title, "Ada Lovelace | LinkedIn");
+        assert_eq!(
+            page.content,
+            "Mathematician\n\nLondon · 9 followers · Analytical Engines\n\n## About\n\nI write programs\\.\n\n## Experience\n\n\
+             - **Analyst**, Analytical Engines\n  1842 - 1843\n  The first program\\.\n  \
+             - [C\\. B\\.](https://uk.linkedin.com/in/cb)\n\n\
+             ## Skills\n\n- Mathematics\n\n\
+             ## Articles\n\n- [Notes](https://www.linkedin.com/pulse/notes), 2026-01-02, 7 likes\n\n\
+             ## Posts\n\n- Ada Lovelace, 2026-02-03: First program https://www.linkedin.com/posts/ada_1"
+        );
+        // A page of LinkedIn that is not a profile, and the sign-in wall.
+        assert!(parse("https://www.linkedin.com/company/ada", &html).is_none());
+        assert!(parse("https://www.linkedin.com/in/ada", "<html></html>").is_none());
+    }
+
+    #[test]
     fn reads_the_answers_in_the_scripts_of_a_quora_page() {
         let rich = |text: &str| {
             json!({"sections": [{"type": "plain", "spans": [{"text": text}]}]}).to_string()
@@ -762,9 +941,14 @@ mod tests {
             None
         );
         assert_eq!(
-            same_page("https://www.amazon.com/"),
+            same_page("https://www.amazon.com/").as_deref(),
             Some("https://www.amazon.com/ref=nav_logo")
         );
+        assert_eq!(
+            same_page("http://linkedin.com/in/someone/?trk=x").as_deref(),
+            Some("https://www.linkedin.com/in/someone?trk=x")
+        );
+        assert_eq!(same_page("https://uk.linkedin.com/in/someone"), None);
         assert_eq!(same_page("https://www.amazon.com/dp/B000"), None);
         assert_eq!(same_page("https://example.org/"), None);
     }

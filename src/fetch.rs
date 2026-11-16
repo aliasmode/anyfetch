@@ -174,7 +174,8 @@ async fn download(url: &str, options: Options<'_>) -> Result<FetchResponse, Tool
             focused: false,
         });
     }
-    let address = alternates::same_page(url).unwrap_or(url);
+    let address = alternates::same_page(url);
+    let address = address.as_deref().unwrap_or(url);
     let response = transport::get_page(address, supported, options.browser).await?;
     let final_url = response.url;
     let status = response.status;
