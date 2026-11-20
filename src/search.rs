@@ -10,6 +10,8 @@ use url::Url;
 )]
 #[serde(rename_all = "lowercase")]
 #[value(rename_all = "lower")]
+// Inline, so the tool schema shows `type: string` with the names, not a `$ref`.
+#[schemars(inline)]
 pub enum Provider {
     // Plain comments here: a documented variant turns the tool's JSON schema from a simple
     // list of names into a list of objects, which some agent harnesses read badly.
@@ -36,6 +38,7 @@ pub enum Provider {
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, ValueEnum, schemars::JsonSchema)]
 #[serde(rename_all = "lowercase")]
 #[value(rename_all = "lower")]
+#[schemars(inline)]
 pub enum Time {
     Day,
     Week,

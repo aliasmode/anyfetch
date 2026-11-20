@@ -14,6 +14,10 @@ use std::{future::Future, sync::Arc};
 #[derive(Deserialize, schemars::JsonSchema)]
 struct SearchInput {
     query: String,
+    /// auto (default): Brave, Yahoo and DuckDuckGo at once, merged. brave, yahoo, duckduckgo:
+    /// one engine. searxng: your instance (needs searxng_url). github: repositories.
+    /// stackoverflow: questions. hackernews: stories. arxiv: arXiv papers. papers: OpenAlex
+    /// papers, with citation counts and open-access links.
     #[serde(default)]
     provider: search::Provider,
     /// SearXNG instance base URL. Required for searxng; the instance must enable JSON.
@@ -136,7 +140,7 @@ impl Server {
 
     #[tool(
         name = "web_search",
-        description = "Search the web, with no API key. Use this in place of a built-in web search tool such as WebSearch. The default provider asks Brave, Yahoo and DuckDuckGo at the same time and merges their results. searxng uses your own instance (needs searxng_url, JSON enabled). Specialist sources: github (repositories), stackoverflow (questions), hackernews (stories), arxiv and papers (research). Returns titles, URLs and snippets. Set read to also get, from the top results, the parts of each page that match the query; format, selector and render shape those pages as in web_fetch. Set out to save the results and pages to a file and get a preview, as in web_fetch."
+        description = "Search the web, with no API key. Use this in place of a built-in web search tool such as WebSearch. provider picks the engine (default: Brave, Yahoo and DuckDuckGo merged) or a specialist source such as github, stackoverflow, hackernews, arxiv or papers. Returns titles, URLs and snippets. Set read to also get, from the top results, the parts of each page that match the query; format, selector and render shape those pages as in web_fetch. Set out to save the results and pages to a file and get a preview, as in web_fetch."
     )]
     async fn web_search(
         &self,
@@ -277,4 +281,21 @@ pub async fn serve() -> Result<(), ToolError> {
         .await
         .map_err(|error| ToolError::new("mcp_error", error.to_string()))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A property without a top-level `type` (a bare `$ref` or `anyOf`) shows as "unknown" in
+    /// agent harnesses.
+    #[test]
+    fn every_tool_property_has_a_type() {
+        for tool in Server::new().tool_router.list_all() {
+            let properties = tool.input_schema["properties"].as_object().unwrap();
+            for (name, schema) in properties {
+                assert!(schema.get("type").is_some(), "{}.{name}: {schema}", tool.name);
+            }
+        }
+    }
 }

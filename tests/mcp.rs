@@ -125,7 +125,7 @@ async fn stdio_exposes_two_tools_and_preserves_results_and_errors() {
                 "auto"
             );
             assert_eq!(
-                tool["inputSchema"]["$defs"]["Provider"]["enum"],
+                tool["inputSchema"]["properties"]["provider"]["enum"],
                 json!([
                     "auto",
                     "brave",

@@ -12,11 +12,46 @@ use std::{
 };
 
 /// Where to save: a file path, or `true` for a name under `.anyfetch/`.
-#[derive(Clone, Debug, Deserialize, schemars::JsonSchema)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(untagged)]
 pub enum Out {
     Auto(bool),
     Path(String),
+}
+
+// Out and Preview have hand-written schemas: the derived ones are an `anyOf` with no top-level
+// `type`, which agent harnesses show as "unknown".
+impl schemars::JsonSchema for Out {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "Out".into()
+    }
+
+    fn inline_schema() -> bool {
+        true
+    }
+
+    fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        schemars::json_schema!({ "type": ["boolean", "string"] })
+    }
+}
+
+impl schemars::JsonSchema for Preview {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "Preview".into()
+    }
+
+    fn inline_schema() -> bool {
+        true
+    }
+
+    fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        schemars::json_schema!({
+            "type": ["boolean", "integer", "array"],
+            "items": { "type": "integer" },
+            "minItems": 2,
+            "maxItems": 2,
+        })
+    }
 }
 
 impl std::str::FromStr for Out {
@@ -32,7 +67,7 @@ impl std::str::FromStr for Out {
 }
 
 /// Which lines of the saved content the answer keeps.
-#[derive(Clone, Copy, Debug, Deserialize, PartialEq, schemars::JsonSchema)]
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
 #[serde(untagged)]
 pub enum Preview {
     /// `true`: the first 20 lines. `false`: none.

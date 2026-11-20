@@ -76,6 +76,7 @@ impl FetchResponse {
 )]
 #[serde(rename_all = "lowercase")]
 #[value(rename_all = "lower")]
+#[schemars(inline)]
 pub enum Format {
     // Plain comments, as in search::Provider, keep the schema a list of names.
     // The article as Markdown, or what a listing page shows.
@@ -92,9 +93,8 @@ pub enum Format {
 }
 
 /// Whether to run a page's scripts in the renderer before reading it.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, schemars::JsonSchema)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
 #[serde(from = "RenderRepr")]
-#[schemars(with = "RenderRepr")]
 pub enum Render {
     /// Only a page that is just scripts, and only if a renderer is installed.
     #[default]
@@ -105,15 +105,34 @@ pub enum Render {
     Off,
 }
 
+/// Written by hand: the derived schema of `RenderRepr` is an `anyOf` with no top-level
+/// `type`, which agent harnesses show as "unknown".
+impl schemars::JsonSchema for Render {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "Render".into()
+    }
+
+    fn inline_schema() -> bool {
+        true
+    }
+
+    fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        schemars::json_schema!({
+            "type": ["boolean", "string"],
+            "enum": [true, false, "auto"],
+        })
+    }
+}
+
 /// How `render` is written: true, false or "auto" (the strings "true" and "false" too).
-#[derive(Deserialize, schemars::JsonSchema)]
+#[derive(Deserialize)]
 #[serde(untagged)]
 enum RenderRepr {
     Flag(bool),
     Word(RenderWord),
 }
 
-#[derive(Deserialize, schemars::JsonSchema)]
+#[derive(Deserialize)]
 #[serde(rename_all = "lowercase")]
 enum RenderWord {
     Auto,
