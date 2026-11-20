@@ -93,7 +93,7 @@ pub async fn setup() -> Vec<String> {
 }
 
 /// The file of `program` on the PATH.
-fn find(program: &str) -> Option<PathBuf> {
+pub(crate) fn find(program: &str) -> Option<PathBuf> {
     let endings: &[&str] = if cfg!(windows) {
         &[".exe", ".cmd", ".bat"]
     } else {
@@ -147,8 +147,15 @@ fn cursor(program: &str) -> Option<String> {
         return None;
     }
     let file = folder.join("mcp.json");
-    let current = std::fs::read_to_string(&file).unwrap_or_default();
-    let saved = with_server(&current, program).and_then(|config| std::fs::write(file, config).ok());
+    // Only a missing file counts as empty; an unreadable one must not be overwritten.
+    let current = match std::fs::read_to_string(&file) {
+        Ok(text) => Some(text),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Some(String::new()),
+        Err(_) => None,
+    };
+    let saved = current
+        .and_then(|current| with_server(&current, program))
+        .and_then(|config| std::fs::write(file, config).ok());
     Some(match saved {
         Some(()) => "connected".to_owned(),
         None => "failed: ~/.cursor/mcp.json could not be changed".to_owned(),
@@ -173,27 +180,5 @@ fn with_server(config: &str, program: &str) -> Option<String> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn adds_the_server_to_an_mcp_file_and_keeps_the_rest() {
-        let current = r#"{"mcpServers": {"other": {"command": "x"}}, "theme": "dark"}"#;
-        let config: Value =
-            serde_json::from_str(&with_server(current, "/bin/anyfetch").unwrap()).unwrap();
-        assert_eq!(config["theme"], "dark");
-        assert_eq!(config["mcpServers"]["other"]["command"], "x");
-        assert_eq!(
-            config["mcpServers"]["anyfetch"],
-            json!({ "command": "/bin/anyfetch", "args": ["mcp"] })
-        );
-        assert!(
-            with_server("", "/bin/anyfetch")
-                .unwrap()
-                .contains("anyfetch")
-        );
-        // A file with comments or errors is left alone.
-        assert!(with_server("{ // note\n}", "/bin/anyfetch").is_none());
-        assert!(with_server("[]", "/bin/anyfetch").is_none());
-    }
-}
+#[path = "setup.test.rs"]
+mod tests;

@@ -6,9 +6,15 @@
 //! [`parse`] is for a page that arrives, but holds its content where the general extractor
 //! cannot read it.
 
-use crate::transport;
+use crate::{ToolError, transport};
 use dom_query::Document;
 use serde_json::Value;
+use std::{
+    path::{Path, PathBuf},
+    process::Stdio,
+    sync::atomic::{AtomicU64, Ordering},
+    time::Duration,
+};
 use url::Url;
 
 pub(crate) struct Page {
@@ -109,6 +115,283 @@ fn dated(slug: &str) -> bool {
     })
 }
 
+/// The id of the video at a YouTube watch, short, shorts or youtu.be address.
+fn youtube_id(url: &Url) -> Option<String> {
+    let host = url.host_str()?.trim_start_matches("www.");
+    let segments: Vec<&str> = url
+        .path_segments()?
+        .filter(|part| !part.is_empty())
+        .collect();
+    let id = match (host, segments.as_slice()) {
+        ("youtube.com" | "m.youtube.com" | "music.youtube.com", ["watch"]) => {
+            let mut ids = url.query_pairs().filter(|(key, _)| key == "v");
+            ids.next()?.1.into_owned()
+        }
+        ("youtu.be", [id, ..]) | ("youtube.com" | "m.youtube.com", ["shorts", id, ..]) => {
+            id.to_string()
+        }
+        _ => return None,
+    };
+    let valid = id.len() == 11
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"-_".contains(&b));
+    valid.then_some(id)
+}
+
+pub(crate) fn is_youtube(url: &str) -> bool {
+    Url::parse(url).is_ok_and(|url| youtube_id(&url).is_some())
+}
+
+/// The yt-dlp program on PATH, which YouTube transcripts require.
+pub(crate) fn yt_dlp() -> Option<PathBuf> {
+    let name = format!("yt-dlp{}", std::env::consts::EXE_SUFFIX);
+    let path = std::env::var_os("PATH").unwrap_or_default();
+    let mut candidates = std::env::split_paths(&path).map(|folder| folder.join(&name));
+    candidates.find(|candidate| candidate.is_file())
+}
+
+/// Like [`read`], but a YouTube video gives its transcript, or the reason it has none.
+pub(crate) async fn read_page(
+    url: &Url,
+    lang: &str,
+    yt_dlp: Option<&Path>,
+) -> Result<Option<Page>, ToolError> {
+    match youtube_id(url) {
+        Some(id) => transcript(&id, lang, yt_dlp).await.map(Some),
+        None => Ok(read(url).await),
+    }
+}
+
+/// One caption cue, or one line of merged cues.
+#[derive(Debug, PartialEq)]
+struct Cue {
+    start_ms: u64,
+    text: String,
+}
+
+struct Video {
+    title: String,
+    channel: String,
+    seconds: u64,
+}
+
+/// A transcript line covers cues that start within this time of its first cue.
+const LINE_MS: u64 = 20_000;
+
+/// Longest yt-dlp may take to read one video.
+const YT_DLP_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// Most of yt-dlp's stderr that is kept.
+const STDERR_CAP: usize = 4096;
+
+/// A language code: 2-3 letters, optionally `-` and 2-8 letters or digits (en, pt-BR, zh-Hans).
+fn valid_lang(lang: &str) -> bool {
+    let (base, region) = match lang.split_once('-') {
+        Some((base, region)) => (base, Some(region)),
+        None => (lang, None),
+    };
+    !base.eq_ignore_ascii_case("all") // yt-dlp's "every language"
+        && (2..=3).contains(&base.len())
+        && base.bytes().all(|b| b.is_ascii_alphabetic())
+        && region.is_none_or(|r| {
+            (2..=8).contains(&r.len()) && r.bytes().all(|b| b.is_ascii_alphanumeric())
+        })
+}
+
+/// The last non-empty line of yt-dlp's stderr, trimmed.
+fn last_line(stderr: &str) -> Option<&str> {
+    stderr.lines().map(str::trim).rfind(|line| !line.is_empty())
+}
+
+/// Removes the directory when dropped, also when the request is cancelled.
+struct TempDir(PathBuf);
+
+impl Drop for TempDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+async fn transcript(id: &str, lang: &str, yt_dlp: Option<&Path>) -> Result<Page, ToolError> {
+    let lang = if lang.is_empty() { "en" } else { lang };
+    if !valid_lang(lang) {
+        let message = "lang must be a language code such as en or pt-BR";
+        return Err(ToolError::new("invalid_request", message));
+    }
+    let needs = "YouTube transcripts need yt-dlp on PATH";
+    let Some(program) = yt_dlp else {
+        return Err(ToolError::new(
+            "transcript_unavailable",
+            format!("{needs}; yt-dlp was not found"),
+        ));
+    };
+    match with_yt_dlp(program, id, lang).await {
+        Ok(Some((video, cues))) => transcript_page(&video, merge(cues)),
+        Ok(None) => Err(ToolError::new(
+            "transcript_unavailable",
+            format!("{needs}; yt-dlp ran but could not read this video"),
+        )),
+        Err(message) => Err(ToolError::new("transcript_unavailable", message)),
+    }
+}
+
+/// `Err` is yt-dlp's own failure message; `Ok(None)` is any other failure.
+async fn with_yt_dlp(
+    program: &Path,
+    id: &str,
+    lang: &str,
+) -> Result<Option<(Video, Vec<Cue>)>, String> {
+    static COUNT: AtomicU64 = AtomicU64::new(0);
+    let name = format!(
+        "anyfetch-yt-{}-{}",
+        std::process::id(),
+        COUNT.fetch_add(1, Ordering::Relaxed)
+    );
+    let dir = TempDir(std::env::temp_dir().join(name));
+    if tokio::fs::create_dir_all(&dir.0).await.is_err() {
+        return Ok(None);
+    }
+    run_yt_dlp(program, id, lang, &dir.0).await
+}
+
+/// Has yt-dlp write the video's data and captions into `dir`, and reads them. The `-orig`
+/// language is where YouTube keeps the automatic captions of some videos.
+async fn run_yt_dlp(
+    program: &Path,
+    id: &str,
+    lang: &str,
+    dir: &Path,
+) -> Result<Option<(Video, Vec<Cue>)>, String> {
+    let languages = format!("{lang},{lang}-orig");
+    let address = format!("https://www.youtube.com/watch?v={id}");
+    let run = tokio::process::Command::new(program)
+        .args([
+            "--quiet",
+            "--no-warnings",
+            "--skip-download",
+            "--no-playlist",
+        ])
+        .args(["--write-info-json", "--write-subs", "--write-auto-subs"])
+        .args(["--sub-format", "json3", "--sub-langs", &languages, "-o"])
+        .arg(dir.join("v"))
+        .args(["--", &address])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .output();
+    let Ok(Ok(output)) = tokio::time::timeout(YT_DLP_TIMEOUT, run).await else {
+        return Ok(None);
+    };
+    if !output.status.success() {
+        let tail = &output.stderr[output.stderr.len().saturating_sub(STDERR_CAP)..];
+        let stderr = String::from_utf8_lossy(tail);
+        let reason = last_line(&stderr).unwrap_or("no error output");
+        return Err(format!("yt-dlp failed ({}): {reason}", output.status));
+    }
+    Ok(read_output(lang, dir).await)
+}
+
+/// Reads what yt-dlp wrote into `dir`.
+async fn read_output(lang: &str, dir: &Path) -> Option<(Video, Vec<Cue>)> {
+    let bytes = tokio::fs::read(dir.join("v.info.json")).await.ok()?;
+    let info: Value = serde_json::from_slice(&bytes).ok()?;
+    let video = Video {
+        title: info["title"].as_str()?.to_owned(),
+        channel: text(if info["channel"].is_string() {
+            &info["channel"]
+        } else {
+            &info["uploader"]
+        }),
+        seconds: info["duration"].as_f64().unwrap_or_default() as u64,
+    };
+    // Manual captions are written under the plain language, automatic ones under either.
+    let files = [format!("v.{lang}.json3"), format!("v.{lang}-orig.json3")];
+    let mut captions = None;
+    for file in &files {
+        if let Ok(bytes) = tokio::fs::read(dir.join(file)).await {
+            captions = Some(bytes);
+            break;
+        }
+    }
+    let data = captions.and_then(|bytes| serde_json::from_slice(&bytes).ok());
+    Some((video, data.map(|data| cues(&data)).unwrap_or_default()))
+}
+
+/// The cues of a json3 caption file, with their text on one line.
+fn cues(data: &Value) -> Vec<Cue> {
+    let events = data["events"].as_array().into_iter().flatten();
+    events
+        .filter_map(|event| {
+            let segs = event["segs"].as_array()?;
+            let words: String = segs.iter().filter_map(|seg| seg["utf8"].as_str()).collect();
+            let words = words.split_whitespace().collect::<Vec<_>>().join(" ");
+            (!words.is_empty()).then(|| Cue {
+                start_ms: event["tStartMs"].as_u64().unwrap_or_default(),
+                text: words,
+            })
+        })
+        .collect()
+}
+
+/// Joins cues into lines of about [`LINE_MS`], so a line is not a few words.
+fn merge(cues: Vec<Cue>) -> Vec<Cue> {
+    let mut lines: Vec<Cue> = Vec::new();
+    for cue in cues {
+        match lines.last_mut() {
+            Some(line) if cue.start_ms.saturating_sub(line.start_ms) < LINE_MS => {
+                line.text.push(' ');
+                line.text.push_str(&cue.text);
+            }
+            _ => lines.push(cue),
+        }
+    }
+    lines
+}
+
+/// `mm:ss`, or `h:mm:ss` from one hour.
+fn clock(milliseconds: u64) -> String {
+    let seconds = milliseconds / 1000;
+    let (hours, minutes, seconds) = (seconds / 3600, seconds / 60 % 60, seconds % 60);
+    if hours > 0 {
+        format!("{hours}:{minutes:02}:{seconds:02}")
+    } else {
+        format!("{minutes:02}:{seconds:02}")
+    }
+}
+
+fn transcript_page(video: &Video, lines: Vec<Cue>) -> Result<Page, ToolError> {
+    if lines.is_empty() {
+        let message = "The video has no captions in that language";
+        return Err(ToolError::new("transcript_unavailable", message));
+    }
+    let duration = (video.seconds > 0).then(|| clock(video.seconds * 1000));
+    let about = [
+        Some(video.channel.clone()).filter(|name| !name.is_empty()),
+        duration,
+    ];
+    let about = about.into_iter().flatten().collect::<Vec<_>>().join(", ");
+    let lines = lines
+        .iter()
+        .map(|line| format!("[{}] {}", clock(line.start_ms), line.text));
+    let content = [
+        format!("# {}", video.title),
+        about,
+        lines.collect::<Vec<_>>().join("\n"),
+    ];
+    let content: Vec<_> = content.iter().filter(|part| !part.is_empty()).collect();
+    Ok(Page {
+        title: video.title.clone(),
+        content: content
+            .iter()
+            .map(|part| part.as_str())
+            .collect::<Vec<_>>()
+            .join("\n\n"),
+        source: None,
+    })
+}
+
 /// Reads the content of `url` from the site's public API or feed, if the site has one.
 pub(crate) async fn read(url: &Url) -> Option<Page> {
     match route(url)? {
@@ -136,7 +419,9 @@ pub(crate) async fn read(url: &Url) -> Option<Page> {
             let api = format!("https://crates.io/api/v1/crates/{name}");
             let package = json(&api).await?;
             let package = &package["crate"];
-            let version = package["max_stable_version"].as_str()?;
+            // A crate with only pre-releases has no stable version.
+            let stable = package["max_stable_version"].as_str();
+            let version = stable.or_else(|| package["max_version"].as_str())?;
             let readme = transport::get(&format!("{api}/{version}/readme"), |_| true).await;
             let readme = readme
                 .map(|body| markdown(&body.text()))
@@ -704,320 +989,5 @@ pub(crate) fn same_page(url: &str) -> Option<String> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use serde_json::json;
-
-    #[test]
-    fn routes_known_pages_to_their_public_endpoint() {
-        let route = |url: &str| route(&Url::parse(url).unwrap());
-        for (url, expected) in [
-            (
-                "https://stackoverflow.com/questions/231767/what-does-yield-do",
-                Some(Route::Question("stackoverflow".into(), "231767".into())),
-            ),
-            (
-                "https://unix.stackexchange.com/questions/42/title?noredirect=1",
-                Some(Route::Question("unix".into(), "42".into())),
-            ),
-            ("https://example.org/questions/42/title", None),
-            ("https://stackoverflow.com/questions/tagged/rust", None),
-            (
-                "https://x.com/user/status/15194807",
-                Some(Route::Tweet("15194807".into())),
-            ),
-            ("https://x.com/user", None),
-            (
-                "https://pypi.org/project/requests/",
-                Some(Route::PyPi("requests".into())),
-            ),
-            (
-                "https://crates.io/crates/serde",
-                Some(Route::Crate("serde".into())),
-            ),
-            (
-                "https://www.reddit.com/r/rust/comments/abc/a_post/",
-                Some(Route::Reddit(
-                    "/r/rust/comments/abc/a_post".into(),
-                    String::new(),
-                )),
-            ),
-            (
-                "https://www.reddit.com/r/rust/top/?t=week",
-                Some(Route::Reddit("/r/rust/top".into(), "&t=week".into())),
-            ),
-            ("https://www.reddit.com/r/rust/.rss", None),
-            ("https://www.reddit.com/r/rust/wiki/index", None),
-            (
-                "https://www.reuters.com/world/us/early-voting-begins-2026-10-06/",
-                Some(Route::Reuters(
-                    "https://www.reuters.com/world/us/early-voting-begins-2026-10-06/?outputType=json".into(),
-                )),
-            ),
-            ("https://www.reuters.com/world/us/", None),
-            ("https://pypi.org/project/requests/2.31.0/", None),
-            ("https://crates.io/crates/serde/versions", None),
-        ] {
-            assert_eq!(route(url), expected, "{url}");
-        }
-    }
-
-    #[test]
-    fn renders_a_question_with_its_answers() {
-        let question = json!({"items":[{"title":"What does &quot;yield&quot; do?","score":13000,
-            "tags":["python","generator"],"body":"<p>How does it work?</p><pre><code>yield x\n</code></pre>"}]});
-        let answers = json!({"items":[
-            {"score":17000,"is_accepted":true,"body":"<p>It makes a generator.</p>"},
-            {"score":12,"is_accepted":false,"body":"<p>Another view.</p>"}]});
-        let page = question_page(&question, &answers).unwrap();
-        assert_eq!(page.title, "What does \"yield\" do?");
-        assert!(page.content.starts_with("How does it work?"));
-        assert!(page.content.contains("```\nyield x\n"));
-        assert!(
-            page.content
-                .contains("Tags: python, generator. Score: 13000.")
-        );
-        assert!(
-            page.content
-                .contains("## Answer (score 17000, accepted)\n\nIt makes a generator")
-        );
-        assert!(
-            page.content
-                .contains("## Answer (score 12)\n\nAnother view")
-        );
-        assert!(question_page(&json!({"items":[]}), &answers).is_none());
-    }
-
-    #[test]
-    fn renders_a_post_and_a_feed() {
-        let tweet = json!({"text":"A short post","created_at":"2022-04-28T00:56:58.000Z",
-            "favorite_count":41,"user":{"name":"Some One","screen_name":"someone"}});
-        let page = tweet_page(&tweet).unwrap();
-        assert_eq!(page.title, "Some One (@someone) on X");
-        assert_eq!(
-            page.content,
-            "A short post\n\nSome One (@someone), 2022-04-28T00:56:58.000Z. Likes: 41."
-        );
-        let feed = r#"<?xml version="1.0"?><feed xmlns="http://www.w3.org/2005/Atom"><title>r/rust</title>
-            <entry><author><name>/u/ann</name></author><content type="html">&lt;p&gt;Body &lt;b&gt;text&lt;/b&gt;&lt;/p&gt;</content>
-            <link href="https://www.reddit.com/r/rust/comments/1/"/><updated>2026-10-11T00:00:00+00:00</updated>
-            <title>First post</title></entry></feed>"#;
-        let page = feed_page(feed).unwrap();
-        assert_eq!(page.title, "r/rust");
-        assert_eq!(
-            page.content,
-            "## First post\n\nhttps://www.reddit.com/r/rust/comments/1/\n/u/ann, 2026-10-11T00:00:00+00:00\n\nBody **text**"
-        );
-        assert!(feed_page("<html><body>blocked</body></html>").is_none());
-    }
-
-    #[test]
-    fn renders_a_reuters_article_from_the_data_of_its_page() {
-        let blocks = json!([
-            {"type": "page-metadata", "data": {"title": "Site title"}},
-            {"type": "article_detail", "data": {"article": {
-                "title": "Rates rise",
-                "published_time": "2026-10-07T04:33:49Z",
-                "sign_off": "Reporting by \u{200b}A. Writer",
-                "content_elements": [
-                    {"type": "paragraph", "content": "The bank raised its <a href=\"/x\">rate</a> to 5.5% on Wed\u{200c}nesday."},
-                    {"type": "placeholder", "content": ["adSlot_mpu"]},
-                    {"type": "header", "level": 1, "content": "WHAT COMES NEXT"},
-                    {"type": "paragraph", "content": "Markets expect more."}
-                ]}}}
-        ]);
-        let page = reuters_page(&blocks).unwrap();
-        assert_eq!(page.title, "Rates rise");
-        assert_eq!(
-            page.content,
-            "Reuters, 2026-10-07T04:33:49Z.\n\nThe bank raised its rate to 5.5% on Wednesday.\n\n\
-             ## WHAT COMES NEXT\n\nMarkets expect more.\n\nReporting by A. Writer"
-        );
-        assert!(reuters_page(&json!([{"data": {}}])).is_none());
-    }
-
-    #[test]
-    fn reads_a_linkedin_profile_without_the_sign_in_windows() {
-        let data = json!({"@graph": [
-            {"@type": "Person", "name": "Ada Lovelace"},
-            {"@type": "Article", "headline": "Notes", "url": "https://www.linkedin.com/pulse/notes",
-                "datePublished": "2026-01-02T03:04:05.000+00:00",
-                "interactionStatistic": {"userInteractionCount": 7}},
-            {"@type": "DiscussionForumPosting", "text": "First\nprogram", "author": {"name": "Ada Lovelace"},
-                "url": "https://www.linkedin.com/posts/ada_1", "datePublished": "2026-02-03T00:00:00.000+00:00"}
-        ]});
-        let html = format!(
-            r#"<script type="application/ld+json">{data}</script>
-            <h1 class="top-card-layout__title">Ada  Lovelace</h1>
-            <h2 class="top-card-layout__headline">Mathematician</h2>
-            <div class="profile-info-subheader"><span>London</span></div>
-            <div class="top-card-layout__first-subline"><span class="not-first-middot">
-              <span>9 followers</span></span></div>
-            <div data-section="currentPositionsDetails">
-              <span class="top-card-link__description">Analytical Engines <img alt></span></div>
-            <section data-section="summary"><h2>About</h2>
-              <div class="core-section-container__content"><p>I write programs.</p>
-                <div class="modal"><h2>Welcome back</h2><button>Sign in</button></div></div></section>
-            <section data-section="experience"><h2>Experience</h2><ul>
-              <li class="profile-section-card"><h3>Analyst</h3><h4>Analytical Engines</h4>
-                <span class="date-range">1842 - 1843</span>
-                <div class="show-more-less-text"><p class="show-more-less-text__text--less">The first…</p>
-                  <p class="show-more-less-text__text--more">The first program.</p></div>
-                <ul><li><a class="face-pile__url" href="https://uk.linkedin.com/in/cb" title="C. B."><img></a></li>
-                  <li><button>Show more</button></li></ul></li></ul></section>
-            <section data-section="skills"><h2>Skills</h2><ul><li>Mathematics</li></ul></section>
-            <section data-section="posts"><h2>Posts</h2><ul><li>Sign in to see</li></ul></section>"#
-        );
-        let page = parse("https://uk.linkedin.com/in/ada", &html).unwrap();
-        assert_eq!(page.title, "Ada Lovelace | LinkedIn");
-        assert_eq!(
-            page.content,
-            "Mathematician\n\nLondon · 9 followers · Analytical Engines\n\n## About\n\nI write programs\\.\n\n## Experience\n\n\
-             - **Analyst**, Analytical Engines\n  1842 - 1843\n  The first program\\.\n  \
-             - [C\\. B\\.](https://uk.linkedin.com/in/cb)\n\n\
-             ## Skills\n\n- Mathematics\n\n\
-             ## Articles\n\n- [Notes](https://www.linkedin.com/pulse/notes), 2026-01-02, 7 likes\n\n\
-             ## Posts\n\n- Ada Lovelace, 2026-02-03: First program https://www.linkedin.com/posts/ada_1"
-        );
-        // A page of LinkedIn that is not a profile, and the sign-in wall.
-        assert!(parse("https://www.linkedin.com/company/ada", &html).is_none());
-        assert!(parse("https://www.linkedin.com/in/ada", "<html></html>").is_none());
-    }
-
-    #[test]
-    fn reads_the_answers_in_the_scripts_of_a_quora_page() {
-        let rich = |text: &str| {
-            json!({"sections": [{"type": "plain", "spans": [{"text": text}]}]}).to_string()
-        };
-        let answer = |question: u64, name: &str, text: &str| {
-            json!({"content": rich(text), "author": {"names": [{"givenName": name, "familyName": ""}]},
-                "question": {"qid": question}})
-        };
-        let list = json!({"sections": [
-            {"type": "plain", "spans": [{"text": "Light "}, {"text": "scatters."}]},
-            {"type": "unordered-list", "spans": [{"text": "Blue scatters most"}]},
-            {"type": "image", "spans": [{"text": ""}]},
-            {"type": "plain", "quoted": true, "spans": [{"text": "Rayleigh, 1871"}]}
-        ]});
-        let mut second = answer(7, "Bo", "");
-        second["content"] = json!(list.to_string());
-        let documents = [
-            json!({"data": {"question": {"qid": 7, "title": rich("Why is the sky blue?"), "answerCount": 702,
-                "answers": {"edges": [{"node": {"answer": answer(7, "Ann", "Because of the air.")}}]},
-                "ads": [{"ad": {"answer": answer(9, "Seller", "Buy this.")}}]}}}),
-            json!({"data": {"node": {"answer": second}}}),
-        ];
-        let literal = |document: &Value| serde_json::to_string(&document.to_string()).unwrap();
-        let html = format!(
-            "<script>results[\"a\"].push({});results[\"b\"].push({});list.push(1);</script>",
-            literal(&documents[0]),
-            literal(&documents[1])
-        );
-        let page = parse("https://www.quora.com/Why-is-the-sky-blue", &html).unwrap();
-        assert_eq!(page.title, "Why is the sky blue?");
-        assert_eq!(
-            page.content,
-            "The first 2 of 702 answers on Quora.\n\n## Answer by Ann\n\nBecause of the air.\n\n\
-             ## Answer by Bo\n\nLight scatters.\n\n- Blue scatters most\n\n> Rayleigh, 1871"
-        );
-        assert!(parse("https://www.quora.com/x", "<html>Just a moment</html>").is_none());
-        assert!(parse("https://example.org/x", &html).is_none());
-    }
-
-    #[test]
-    fn routes_imdb_titles_and_the_economist_home_page() {
-        let route = |url: &str| route(&Url::parse(url).unwrap());
-        assert_eq!(
-            route("https://www.imdb.com/title/tt0111161/"),
-            Some(Route::Imdb("tt0111161".into()))
-        );
-        assert_eq!(route("https://www.imdb.com/title/tt01x/"), None);
-        assert_eq!(
-            route("https://www.economist.com/"),
-            Some(Route::Feed("https://www.economist.com/latest/rss.xml"))
-        );
-        assert_eq!(
-            route("https://www.economist.com/leaders/2026/10/11/a-title"),
-            None
-        );
-        assert_eq!(
-            same_page("https://www.amazon.com/").as_deref(),
-            Some("https://www.amazon.com/ref=nav_logo")
-        );
-        assert_eq!(
-            same_page("http://linkedin.com/in/someone/?trk=x").as_deref(),
-            Some("https://www.linkedin.com/in/someone?trk=x")
-        );
-        assert_eq!(same_page("https://uk.linkedin.com/in/someone"), None);
-        assert_eq!(same_page("https://www.amazon.com/dp/B000"), None);
-        assert_eq!(same_page("https://example.org/"), None);
-    }
-
-    #[test]
-    fn renders_a_reddit_thread_and_a_listing_from_their_data() {
-        let post = json!({"subreddit": "rust", "author": "ann", "created_utc": 1791676800.0, "score": 12,
-            "num_comments": 2, "is_self": true, "title": "Why is it slow?", "selftext": "My loop is slow.",
-            "permalink": "/r/rust/comments/1/why/", "url": "https://www.reddit.com/r/rust/comments/1/why/"});
-        let reply = json!({"kind": "Listing", "data": {"children": [
-            {"kind": "t1", "data": {"author": "cy", "score": 3, "body": "Thanks.", "replies": ""}}]}});
-        let comments = json!({"kind": "Listing", "data": {"children": [
-            {"kind": "t1", "data": {"author": "bo", "score": 7, "body": "Build with --release.", "replies": reply}},
-            {"kind": "more", "data": {"count": 4}}]}});
-        let listing =
-            json!({"kind": "Listing", "data": {"children": [{"kind": "t3", "data": post}]}});
-        let page = reddit_page(&json!([listing, comments])).unwrap();
-        assert_eq!(page.title, "Why is it slow?");
-        assert_eq!(
-            page.content,
-            "r/rust, u/ann, 2026-10-11, score 12, 2 comments\n\nMy loop is slow.\n\n\
-             ## u/bo, score 7\n\nBuild with --release.\n\n### u/cy, score 3\n\nThanks.\n\n\
-             (4 more comments are not shown.)"
-        );
-        let page = reddit_page(&listing).unwrap();
-        assert_eq!(page.title, "r/rust");
-        assert_eq!(
-            page.content,
-            "## Why is it slow?\n\nhttps://www.reddit.com/r/rust/comments/1/why/\n\
-             r/rust, u/ann, 2026-10-11, score 12, 2 comments\n\nMy loop is slow."
-        );
-        assert!(reddit_page(&json!({"error": 403})).is_none());
-    }
-
-    #[test]
-    fn renders_an_imdb_title_and_an_rss_feed() {
-        let data = json!({"data": {"title": {"titleText": {"text": "The Film"}, "titleType": {"text": "Movie"},
-            "releaseYear": {"year": 1994}, "runtime": {"seconds": 8520}, "certificate": {"rating": "R"},
-            "ratingsSummary": {"aggregateRating": 9.3, "voteCount": 3251463},
-            "metacritic": {"metascore": {"score": 82}}, "genres": {"genres": [{"text": "Drama"}]},
-            "plots": {"edges": [{"node": {"plotText": {"plainText": "Short."}}},
-                {"node": {"plotText": {"plainText": "A banker goes to prison."}}}]},
-            "credits": {"edges": [
-                {"node": {"category": {"text": "Director"}, "name": {"nameText": {"text": "F. D."}}}},
-                {"node": {"category": {"text": "Actor"}, "name": {"nameText": {"text": "T. R."}},
-                    "characters": [{"name": "Andy"}]}}]}}}});
-        let page = imdb_page(&data).unwrap();
-        assert_eq!(page.title, "The Film (1994)");
-        assert_eq!(
-            page.content,
-            "Movie, 1994, 142 minutes, rated R, genres: Drama, IMDb rating 9.3, 3251463 votes, \
-             Metascore 82.\n\nA banker goes to prison.\n\n\
-             ## Credits\n\n- Director: F. D.\n- Actor: T. R. (Andy)"
-        );
-        let unreleased = json!({"data": {"title": {"titleText": {"text": "Next"}, "titleType": {"text": "Movie"}}}});
-        let page = imdb_page(&unreleased).unwrap();
-        assert_eq!(page.title, "Next");
-        assert!(page.content.starts_with("Movie.\n\n"));
-        assert!(imdb_page(&json!({"data": {"title": null}})).is_none());
-
-        let feed = "<?xml version=\"1.0\"?><rss version=\"2.0\"><channel><title><![CDATA[Latest]]></title>\
-            <item><title><![CDATA[Oil & gas]]></title><description><![CDATA[Prices <b>rise</b>]]></description>\
-            <link>https://example.org/oil</link><guid>1</guid><pubDate>Sun, 11 Oct 2026 16:33:11 +0000</pubDate></item>\
-            </channel></rss>";
-        let page = feed_page(feed).unwrap();
-        assert_eq!(page.title, "Latest");
-        assert_eq!(
-            page.content,
-            "## Oil & gas\n\nhttps://example.org/oil\nSun, 11 Oct 2026 16:33:11 +0000\n\nPrices rise"
-        );
-    }
-}
+#[path = "alternates.test.rs"]
+mod tests;

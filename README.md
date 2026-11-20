@@ -1,390 +1,240 @@
-# Anyfetch
+# Anyfetch (fork)
 
-**Web search and web fetch for AI agents. One small binary, no API keys, and it reads the sites that refuse your agent.**
+For the full upstream documentation, see [README-OG.md](README-OG.md).
 
-Free and open source, from the makers of [AliasMode](https://aliasmode.com/).
+This fork adds the features below on top of upstream Anyfetch. Everything else works as upstream describes: [install](README-OG.md#install), [connect your agent](README-OG.md#connect-your-agent-by-hand), [tools](README-OG.md#tools), [Cloudflare checks](README-OG.md#cloudflare-checks), [proxy](README-OG.md#use-a-proxy).
 
-Agent harnesses fetch pages with a bot identity, and a large part of the web answers `403`. Anyfetch sends the request a real browser sends, so your agent gets the page.
-
-| 97 popular sites that block AI agents | Pages read |
+| Feature | Section |
 | --- | --- |
-| **Anyfetch** | **82** |
-| **Anyfetch with a [NobleProxy](https://nobleproxy.com/?utm_source=anyfetch&utm_medium=readme&utm_campaign=anyfetch) residential IP** | **87** |
-| curl | 46 |
-| Reference MCP fetch server | 39 |
-| Claude Code built-in `WebFetch` | 36 |
+| A real browser for pages that need scripts or refuse plain requests | [Browser fallback](#browser-fallback) |
+| Output formats, CSS selectors and jq programs | [New inputs](#new-inputs) |
+| Choose when page scripts run | [Pages that need their scripts](#pages-that-need-their-scripts) |
+| Save fetched content to a file and get a preview | [Saving to a file](#saving-to-a-file) |
+| YouTube transcripts | [YouTube](#youtube) |
+| No fetches of local, private or cloud metadata addresses | [Local addresses](#local-addresses) |
+| Tool schemas that strict clients accept | [Tool schemas](#tool-schemas) |
+| Limits and new error codes | [Limits](#limits), [Errors](#errors) |
 
-Anyfetch read 28 sites that no other tool in the table could read. Among them: The New York Times, Reuters, Bloomberg, The Washington Post, The Economist, Medium, Reddit, Stack Overflow, IMDb and YouTube.
+## Browser fallback
 
-| 33 research questions, each asked twice | Answered correctly both times |
+When plain requests are not enough, Anyfetch loads the page in a Chromium-based browser (Chrome, Brave, Edge or Chromium). It drives the browser itself over the DevTools protocol, so it needs no Node, Bun or Playwright install. It does this in two cases:
+
+- A page that holds nothing without its scripts, when Lightpanda is not installed or returns nothing.
+- A page that refuses plain requests: a bot check, or HTTP 401, 403 or 503 (Amazon refuses with 503). A browser with your profile often gets through, since it has that profile's cookies. If the browser is refused too, the error says so: `... The browser fallback failed too: HTTP 403`.
+
+So a page that only shows its content after its scripts run is no longer limited to its title and description, as [upstream](README-OG.md#what-it-does-not-do) says, when a browser is available.
+
+Anyfetch picks the browser in this order:
+
+1. A browser already open for remote debugging: `browser.cdpEndpoint` in the [config file](#optional-browser-settings-in-a-config-file), a `DevToolsActivePort` file in the profile folder, or port 9222.
+2. A new browser on `PLAYWRIGHT_USERDATA_DIR`, else on `browser.userDataDir` of the config file. It uses `launchOptions.executablePath`, `headless` (default `true`) and `args` from that file.
+3. A new browser on its own default profile, only when that profile is not open. Chrome and Edge 136 and later refuse automation of their default profile, so for them Anyfetch asks for a copy straight away.
+
+| Setting | Effect |
 | --- | --- |
-| **Agent with Anyfetch** | **32** |
-| Same agent with Claude Code built-in `WebSearch` and `WebFetch` | 27 |
+| `PLAYWRIGHT_USERDATA_DIR=/path/to/profile` | Start the browser on this user data folder. A profile folder inside one, such as `.../User Data/Profile 1`, also works. |
+| `PLAYWRIGHT_MCP_CONFIG=/path/to/playwright.json` | Read `browser.userDataDir`, `browser.cdpEndpoint` and `browser.launchOptions` (`executablePath`, `headless`, `args`) from this file, in the Playwright MCP config format. Optional. |
+| `ANYFETCH_CHROMIUM=off` | Never use the browser fallback. |
 
-Thirteen of the questions are about a page on a site that blocks AI agents. The built-in fetch could not read any of those 13 pages. Its search found the answer in another source for 7 of them. Anyfetch answered 12 in both runs. The questions were written from pages that Anyfetch can read, so this group shows what the built-in tools miss.
+When the browser cannot start, the fetch returns `browser_unavailable` and the message lists the steps to fix it. Anyfetch writes the same text to stderr, which MCP clients keep in their server log. A failed start is not tried again for 5 minutes. The browser Anyfetch started closes after 5 minutes without a fetch, and when Anyfetch exits.
 
-| One page, started fresh | Time | Peak memory |
-| --- | --- | --- |
-| **Anyfetch** | **0.19 s** | **17 MB** |
-| Headless Chromium | 1.15 s | 544 MB |
+Anyfetch writes `anyfetch-browser.json` into the user data folder of a browser it starts, with the browser's process ID and debugging port. If the client kills Anyfetch, the browser keeps running until the next Anyfetch finds it through `DevToolsActivePort`. When the marker matches that browser and the Anyfetch that wrote it is gone, Anyfetch adopts it and closes it like its own: after 5 minutes idle and on exit. A browser that another running Anyfetch uses is only attached to. The marker of a start that timed out names the browser by its start time instead, so a browser that opened its port late is adopted too. A browser without a matching marker, such as one you started with `--remote-debugging-port=9222`, is never closed. A marker whose process is gone is removed.
 
-Sites: measured on 2026-10-12 with version 0.8.0. Questions: measured on 2026-10-12 with version 0.7.1. Time and memory: measured on 2026-10-11. All from a cloud server, with no proxy except in the proxy row. See [how we measured](#benchmark) and how to run it again.
+### Use a copy of your profile
 
-## What your agent gets
+A browser holds its profile folder while it runs, and Chrome and Edge refuse automation of their default profile. So give Anyfetch a copy:
 
-- **Search with no key.** Brave, Yahoo and DuckDuckGo results, with domain and date filters, quoted phrases and paging. Specialist sources for GitHub, Stack Overflow, Hacker News, arXiv and research papers. Or your own SearXNG.
-- **Search and read in one call.** Ask for the top results together with the result list, and get the parts of each page that match your query.
-- **Answers, not whole pages.** Give a question with the URL, and get only the parts of the page that match it. The Python 3.15 release notes are 218,000 characters; the answer to one question about them came back in 2,200.
-- **Clean Markdown.** Links, tables and code blocks stay intact. Long pages come in parts.
-- **PDFs.** Papers and reports come back as text, page by page.
-- **Sites that need JavaScript.** Anyfetch reads the data inside the page, and uses the site's public API or feed for Stack Overflow, Reddit, IMDb, X posts, PyPI and crates.io. A Reddit thread comes with every comment and its score. No browser runs. For pages that hold nothing without their scripts, it can use Lightpanda, an optional small engine.
-- **News and answers.** Full articles on Reuters and Bloomberg, the latest articles of The Economist, and the answers on Quora, from the data that these sites send.
-- **Home pages and listings.** A page with no single article comes back as its headlines and links, in page order.
-- **Browser-grade requests.** Safari's TLS, HTTP/2 and header fingerprint. A refused fetch is retried automatically, as the same browser or as a second one. Bot checks that are one fixed step, as on Reddit and Behance, are passed.
-- **Cloudflare checks.** When a site insists on a JavaScript check, your own Firefox passes it once. After that, Anyfetch reads the site with plain requests.
-- **Fast on repeat.** Several pages in one call, fetched at the same time. A page fetched in the last 15 minutes comes from a local copy.
-- **Lightweight.** A 16 MB Rust binary. No bundled browser, no JavaScript engine, no Python, no Node.
-- **Works everywhere.** A stdio MCP server for agent harnesses, and a plain CLI for everything else.
+1. Close the browser, so that its files are complete.
+2. Copy its user data folder to a new folder. See the table below.
+3. Set `PLAYWRIGHT_USERDATA_DIR` to the copy and restart the MCP server.
 
-## Install
+| Browser | Windows user data folder |
+| --- | --- |
+| Chrome | `%LOCALAPPDATA%\Google\Chrome\User Data` |
+| Brave | `%LOCALAPPDATA%\BraveSoftware\Brave-Browser\User Data` |
+| Edge | `%LOCALAPPDATA%\Microsoft\Edge\User Data` |
 
-macOS and Linux:
-
-```sh
-curl -fsSL https://aliasmode.github.io/anyfetch/install.sh | sh
-```
-
-Windows, in PowerShell:
-
-```powershell
-irm https://aliasmode.github.io/anyfetch/install.ps1 | iex
-```
-
-The installer puts `anyfetch` in `~/.local/bin`. Then it connects Anyfetch to each agent harness that it finds on the machine: Claude Code, Codex, Gemini CLI, Hermes Agent, Pi, Cline, Amp, OpenClaw and Cursor. Start a new agent session, and the agent has `web_search`, `web_fetch` and `web_fetch_many`.
-
-Did you install a harness later? Run `anyfetch setup`. It uses each harness's own command, tells you what it connected, and is safe to run again.
-
-**Do you have Node.js?** Then no install is needed. Give your MCP client this server, and `npx` gets the program for your platform:
+On macOS they are under `~/Library/Application Support/`, on Linux under `~/.config/`.
 
 ```json
 {
   "mcpServers": {
-    "anyfetch": { "command": "npx", "args": ["-y", "@aliasmode/anyfetch", "mcp"] }
+    "anyfetch": {
+      "command": "anyfetch",
+      "args": ["mcp"],
+      "env": {
+        "ANYFETCH_ALLOW_LOCALHOST": "1",
+        "PLAYWRIGHT_USERDATA_DIR": "/path/to/profile-copy/Profile 1",
+        "PLAYWRIGHT_MCP_CONFIG": "/path/to/profile-copy/playwright.json"
+      }
+    }
   }
 }
 ```
 
-**Only Claude Code, on macOS or Linux?** You can install Anyfetch as a plugin instead. The plugin gets the program at its first start:
+### Optional: browser settings in a config file
 
-```sh
-claude plugin marketplace add aliasmode/anyfetch && claude plugin install anyfetch@anyfetch
-```
-
-Inside Claude Code 2.1.275 or later, this is one step: `/plugin install anyfetch --marketplace aliasmode/anyfetch`. Use the plugin or the installer, not both, or the agent sees every tool twice.
-
-## Connect your agent by hand
-
-`anyfetch setup` does this for you. To do it by hand, each harness needs one command.
-
-**Claude Code**
-
-```sh
-claude mcp add --scope user anyfetch -- anyfetch mcp
-```
-
-**Codex**
-
-```sh
-codex mcp add anyfetch -- anyfetch mcp
-```
-
-or in `~/.codex/config.toml`:
-
-```toml
-[mcp_servers.anyfetch]
-command = "anyfetch"
-args = ["mcp"]
-```
-
-**Hermes Agent**
-
-```sh
-hermes mcp add anyfetch --command anyfetch --args mcp
-```
-
-Hermes connects, lists the tools and asks to enable them. Answer `Y`.
-
-**Pi**
-
-```sh
-pi mcp add anyfetch -- anyfetch mcp
-```
-
-Pi hides MCP tools behind its code mode by default. To show the tools to the model directly, set the exposure in `~/.pi/agent/mcp.json`:
+To pick the browser program, show its window or add flags, put them in a JSON file and set `PLAYWRIGHT_MCP_CONFIG` to it. The file uses the format of the [Playwright MCP](https://github.com/microsoft/playwright-mcp) config, so an existing one can be reused, but Anyfetch needs neither Playwright nor that server.
 
 ```json
 {
-  "mcpServers": {
-    "anyfetch": { "command": "anyfetch", "args": ["mcp"], "exposure": "direct" }
+  "browser": {
+    "userDataDir": "/path/to/profile-copy",
+    "launchOptions": {
+      "executablePath": "/path/to/chrome",
+      "headless": true,
+      "args": ["--profile-directory=Default"]
+    }
   }
 }
 ```
 
-**Gemini CLI**
+Notes:
 
-```sh
-gemini mcp add -s user anyfetch anyfetch mcp
-```
-
-**OpenCode** — in `~/.config/opencode/opencode.json`:
-
-```json
-{
-  "$schema": "https://opencode.ai/config.json",
-  "mcp": {
-    "anyfetch": { "type": "local", "command": ["anyfetch", "mcp"], "enabled": true }
-  }
-}
-```
-
-**Cursor** — in `~/.cursor/mcp.json`:
-
-```json
-{
-  "mcpServers": {
-    "anyfetch": { "command": "anyfetch", "args": ["mcp"] }
-  }
-}
-```
-
-**More harnesses**
-
-| Harness | Command |
-| --- | --- |
-| Cline | `cline mcp add anyfetch --yes -- anyfetch mcp` |
-| Amp | `amp mcp add anyfetch -- anyfetch mcp` |
-| OpenClaw | `openclaw mcp add anyfetch --command anyfetch --arg mcp` |
-| Goose | `goose session --with-extension "anyfetch mcp"` |
-| VS Code (Copilot) | `code --add-mcp "{\"name\":\"anyfetch\",\"command\":\"anyfetch\",\"args\":[\"mcp\"]}"` |
-
-Any other MCP client: add a stdio server with the command `anyfetch` and the argument `mcp`.
-
-Anyfetch is in the official [MCP Registry](https://registry.modelcontextprotocol.io/v0/servers?search=anyfetch) as `io.github.aliasmode/anyfetch`, and on npm as [`@aliasmode/anyfetch`](https://www.npmjs.com/package/@aliasmode/anyfetch).
-
-**No MCP?** Give the agent the CLI. Add this to `AGENTS.md` or the harness's instruction file:
-
-```markdown
-## Web access
-- Search the web: `anyfetch search "<query>"`
-- Read pages: `anyfetch fetch <url> [<url>...] --format markdown`
-```
-
-**Make it the default.** Anyfetch tells the agent to use its tools in place of the built-in web tools. In our test with Claude Code, the agent then chose Anyfetch for 8 of 8 web tasks. Before, it chose Anyfetch for 2 of 8. To take the choice away, turn the built-ins off:
-
-- Claude Code, in `~/.claude/settings.json`: `"permissions": { "deny": ["WebFetch", "WebSearch"] }`
-- Codex, in `~/.codex/config.toml`: `web_search = "disabled"`
+- One browser at a time can open a profile folder. While another browser has it open, Anyfetch reports it as in use.
+- To share a running browser, start it with `--remote-debugging-port=9222 --user-data-dir=/path/to/profile-copy`. Anyfetch attaches to port 9222, or to `cdpEndpoint` in the config file.
+- The browser opens pages with that profile's cookies, so a page sees you as signed in. Use a profile without accounts you would not want an agent's fetches to use.
+- Like Lightpanda, the browser opens only public sites unless a setting in [Local addresses](#local-addresses) allows the page, and is not used together with a proxy.
+- If the browser ends on a page on this machine or a private network, and the fetch did not start there, Anyfetch discards it and returns `blocked_address`. Only the dangerous setting below allows it.
+- Lightpanda reports no final address, so its redirects are not checked.
+- Only the page address is checked. The page's scripts can still send requests to other hosts, also on your network. Chrome's own local network protections apply to them; Lightpanda has none.
+- Some sites refuse headless browsers. Set `headless` to `false` in the config to show the window.
 
 ## Use it from the command line
 
+On top of the [upstream commands](README-OG.md#use-it-from-the-command-line):
+
 ```sh
-anyfetch search "rust async runtime comparison"
-anyfetch search "tokio select" --site docs.rs --time year
-anyfetch search "postgres vacuum freeze" --read 3
-anyfetch search "retrieval augmented generation" --provider papers
-anyfetch fetch https://stackoverflow.com/questions/231767 --format markdown
-anyfetch fetch https://arxiv.org/pdf/1706.03762 --max-chars 8000 --offset 8000
-anyfetch fetch https://docs.python.org/3.15/whatsnew/3.15.html --query "sampling profiler rate"
-anyfetch fetch https://www.rust-lang.org/ https://go.dev/ https://ziglang.org/
+anyfetch fetch https://news.ycombinator.com/ --content html --selector ".titleline > a"
+anyfetch fetch https://api.github.com/repos/rust-lang/rust --selector "{name, stars: .stargazers_count}"
+anyfetch fetch "https://www.youtube.com/watch?v=<id>" --lang en # Youtube video transcript
+anyfetch fetch https://docs.python.org/3.15/whatsnew/3.15.html --out true --preview 40:20
 ```
 
-Output is JSON by default, so scripts and agents can parse it. `--format markdown` prints only the page content.
+`--content`, `--selector`, `--render`, `--lang`, `--out` and `--preview` are the `format`, `selector`, `render`, `lang`, `out` and `preview` inputs of `web_fetch`. The flag is `--content`, not `--format`, because `--format` already picks the output. `search --read` takes `--content`, `--selector`, `--render`, `--out` and `--preview` too.
 
-## Tools
+## New inputs
 
 ### `web_fetch`
 
+Added to the [upstream inputs](README-OG.md#web_fetch):
+
 | Input | Meaning |
 | --- | --- |
-| `url` | The page to read. |
-| `query` | Optional. A question or keywords. The result has only the parts of the page that match. |
-| `max_chars` | Optional. The most content characters to return. The default is 50,000, or 5,000 with a `query`. |
-| `offset` | Optional. The first content character to return. Not used with a `query`. |
-| `fresh` | Optional. Fetch again even if a copy from the last 15 minutes exists. |
+| `format` | Optional. `readable` (default): the article as Markdown. `markdown`: the whole page as Markdown. `text`: plain text, a line per block, no links. `html`: the HTML as served, or as rendered when `render` applies. `json`: the body as JSON, from any content type, run through `jq .`; `not_json` if it does not parse. |
+| `selector` | Optional. Keep only part of the page. On HTML, a CSS selector: all matches in page order (`readable` then gives Markdown). On JSON, a jq program run by [jaq](https://github.com/01mf02/jaq): one result is returned as is, several as an array. Without `env`, `input` or `debug`. Limits: 15 seconds, 1 GB of memory, input nesting depth 256. Ignored on other pages that are not HTML: they come back whole. An empty string means not set. |
+| `render` | Optional. `"auto"` (default), `"true"` or `"false"`. See [Pages that need their scripts](#pages-that-need-their-scripts). |
+| `lang` | Optional. Caption language for YouTube transcripts (yt-dlp is required), for example `en` (default) or `es`. An empty string means `en`. |
+| `out` | Optional. Save the content to a file and get a preview: a path, or `"true"`. See [Saving to a file](#saving-to-a-file). |
+| `preview` | Optional, only with `out`. Which lines of the saved content come back: `"true"` (default, the first 20), `"false"`, `"N"`, `"-N"` or `"START:COUNT"`. |
 
-The result has `title`, `description`, `content` (Markdown), `total_chars`, `url` (after redirects), `status` and `retrieved_at`. To read a long page in parts, call again with a higher `offset` until it reaches `total_chars`. The parts come from the local copy, so the site gets one request.
-
-With a `query`, the page is split at its paragraphs, tables and code blocks. The parts that best match the words of the query come back in page order, under their headings, with `[...]` where parts are left out. The result then has `focused: true`. A page with no matching part comes back from its start. A second question about the same page uses the local copy.
-
-HTML becomes Markdown. A PDF becomes text with `[Page N]` marks. JSON, plain text and XML feeds come back as they are.
+The result's `content` is Markdown unless `format` says otherwise. The cache key includes `format`, `selector` and `render`, and `lang` for YouTube URLs.
 
 ### `web_fetch_many`
 
+Added to the [upstream inputs](README-OG.md#web_fetch_many):
+
 | Input | Meaning |
 | --- | --- |
-| `urls` | The pages to read. They are fetched at the same time. |
-| `query` | Optional. As for `web_fetch`. Each page gives up to 5,000 characters. |
-| `max_chars` | Optional. The most content characters per page. By default the pages share 50,000. |
-| `fresh` | Optional. As for `web_fetch`. |
-
-The result has `pages`: one entry per URL, in order. Each entry is the page, or its `error`.
+| `format`, `selector`, `render`, `lang` | Optional. As for `web_fetch`, for each page. |
+| `out`, `preview` | Optional. As for `web_fetch`. A path gets all pages in order; `"true"` gives each URL its own file. |
 
 ### `web_search`
 
+Added to the [upstream inputs](README-OG.md#web_search):
+
 | Input | Meaning |
 | --- | --- |
-| `query` | The search query. Quoted phrases work. |
-| `provider` | Optional. See the list below. The default is `auto`. |
-| `site` | Optional. Keep results from one domain, for example `docs.rs`. |
-| `time` | Optional. `day`, `week`, `month` or `year`. |
-| `page` | Optional. The result page, from 1. |
-| `read` | Optional. Also return, from this many top results, the parts of each page that match the query. |
-| `searxng_url` | The base URL of your SearXNG instance, for the `searxng` provider. It must have JSON output on. |
-
-Each result has `title`, `url` and `snippet`, and `content` when you set `read`.
-
-| Provider | Source |
-| --- | --- |
-| `auto` | Brave, Yahoo and DuckDuckGo at the same time. Their lists are merged, and pages that several engines rank high come first. `engines` names the engines that answered. |
-| `brave` | Brave Search. About 20 results per page. |
-| `yahoo` | Yahoo Search. 7 results per page. No `year` filter. |
-| `duckduckgo` | DuckDuckGo. First page only. |
-| `searxng` | Your own SearXNG instance. |
-| `github` | GitHub repositories, with stars and language. |
-| `stackoverflow` | Stack Overflow questions, with score and answer count. |
-| `hackernews` | Hacker News stories, with points and the discussion link. |
-| `arxiv` | arXiv papers, with abstracts. |
-| `papers` | Research papers from OpenAlex, with citation counts and open-access links. |
-
-`site`, `time` and quoted phrases apply to the web engines. The specialist sources are free public APIs with their own request limits.
-
-### Errors
-
-A failed call returns an `error` object with a `code` the agent can act on:
-
-| Code | Meaning |
-| --- | --- |
-| `challenge_required` | The site answered with a bot challenge that needs a browser. |
-| `http_error` | The site refused the request. `status` has the HTTP code. |
-| `rate_limited` | The site asked to slow down. `retry_after` has the wait, when given. |
-| `timeout` | The site did not answer within 30 seconds. |
-| `unsupported_content` | The URL is not text or a PDF (an image, for example). |
-| `extraction_failed` | The page has no readable content. A scanned PDF has no text. |
-
-## Cloudflare checks
-
-Some sites answer every first request with a JavaScript check. Anyfetch handles it in two steps:
-
-1. Your own Firefox passes the check once. It runs hidden, with a throwaway profile, for a few seconds.
-2. Anyfetch saves the clearance for that site and goes back to plain requests. On Medium, one pass is good for a year.
-
-In our test, the first page of such a site took about 5 seconds and the next one under 2 seconds.
-
-This needs Firefox, or a Firefox-based browser, on the machine. Without one, nothing changes: the fetch returns `challenge_required`.
-
-| Setting | Effect |
-| --- | --- |
-| `ANYFETCH_BROWSER=off` | Never start a browser. |
-| `ANYFETCH_BROWSER=/path/to/browser` | Use this Firefox-based browser. |
-
-For an MCP server, set the variable in the server entry. In Claude Code:
-
-```sh
-claude mcp add --scope user anyfetch -e ANYFETCH_BROWSER=off -- anyfetch mcp
-```
-
-Notes:
-
-- Tested on Linux. On Windows, and for a snap-packaged Firefox (the Ubuntu default), the browser is used only when `ANYFETCH_BROWSER` names it.
-- A clearance belongs to the address that earned it, so the browser is not used together with a proxy.
-- Saved clearances are in `~/.config/anyfetch/clearance/`. Delete a file to forget a site.
+| `format`, `selector`, `render` | Optional. As for `web_fetch`, for the pages that `read` returns. |
+| `out`, `preview` | Optional. Save the results and read pages as Markdown (`"true"`: `.anyfetch/search/<query>.md`). The answer keeps the results without their `content`; the preview is in `content`, and `saved` says where the file is. |
+| `searxng_url` | Changed: it may be on this machine or your network, such as `http://localhost:8888`, also without `ANYFETCH_ALLOW_PRIVATE=1`. |
 
 ## Pages that need their scripts
 
-Most pages give Anyfetch their text without JavaScript: it is in the HTML, in the page's data, or behind a public API. A few hold nothing until their scripts run. MSN, Spotify and Airbnb are examples. For those, Anyfetch can use [Lightpanda](https://github.com/lightpanda-io/browser), a small headless engine without a full browser.
+[Upstream](README-OG.md#pages-that-need-their-scripts) runs page scripts in Lightpanda only for pages that are just scripts. The `render` input (`--render` on the command line) sets when scripts run. The renderer is Lightpanda, then the [browser fallback](#browser-fallback).
 
-Lightpanda is optional and separate. Install it from its README, put `lightpanda` on your `PATH`, and Anyfetch uses it for the pages that need it. In our test, MSN went from no content to 154,000 characters in 12 seconds, and Spotify from no content to 23,000 characters in 3 seconds. Pages that already work are not rendered, so they stay fast.
+| `render` | Effect |
+| --- | --- |
+| `"auto"` (default) | Run the page's scripts only when the page is just scripts and a renderer is available. Pages that already work are not rendered, so they stay fast. |
+| `"true"` | Render every HTML page, for every `format`. The error is `renderer_missing` if no renderer is available, `blocked_address` if the page is not public and no [setting](#local-addresses) allows it, or requests go through a proxy, and `render_failed` if the renderer returns no page. |
+| `"false"` | Never render. |
+
+With `"false"`, or when no renderer is available, Anyfetch also skips the article extraction on the formats other than `readable`, since it is only needed to spot a page that is just scripts.
+
+## Saving to a file
+
+Set `out` (`--out` on the command line) to write the content to a file. You can then view, share or grep it later, and the model context gets only a preview.
+
+- A path is taken from the server's working directory. It must be in a subfolder of it, not the folder itself, also after links are followed, with no `..`. It must end in `.md`, `.txt`, `.html`, `.json` or `.jsonl`. `git check-ignore` must say it is ignored; outside a git repository, use `"true"`.
+- `"true"` picks `.anyfetch/<host>/<path>.<ext>`, with the extension from `format`. `.anyfetch/` gets a `.gitignore` of `*`. If the working directory is not writable, the file goes to the temporary directory.
+- An existing file is appended to, never cut. Each Markdown, text or HTML entry starts with `<!-- anyfetch: <url> <retrieved_at> -->`.
+- JSON content is saved as JSON Lines: each entry is one compact line with no comment line. This holds for `.jsonl` (the automatic name for JSON content) and for an explicit `.json` path. The preview of JSON shows the pretty-printed content, so `preview_lines` counts the lines of that text, not of the file.
+- The answer keeps its other fields. `content` holds the preview, or is left out with `preview: "false"`. `saved` has `path`, `bytes_written`, `appended` and `preview_lines` (such as `1-20 of 340`). A preview stops at 50,000 characters.
+- `preview` is a string: `"true"` (the first 20 lines), `"false"`, `"N"` (the first N lines), `"-N"` (the last N), or `"START:COUNT"`: COUNT lines from line START, counting from 1 (`"40:20"` is lines 40-59). JSON `true`, `false`, numbers and `[start, count]` still work.
+- A path that breaks these rules gives `invalid_request`; a failed write gives `write_failed`.
+
+## YouTube
+
+A YouTube video URL (`watch?v=`, `youtu.be/`, `/shorts/`, also `m.` and `music.`) returns the transcript as Markdown: the title, the channel and length, then lines such as `[01:05] text`, each about 20 seconds long. Manual captions come before automatic ones. Set `lang` (`--lang` on the command line) for another language; use the full code, such as `pt-BR`, if the video has only that form.
+
+[yt-dlp](https://github.com/yt-dlp/yt-dlp) is required for YouTube transcripts. Put `yt-dlp` on your `PATH`. Without it, or if it fails, the error is `transcript_unavailable`. That code also means the video has no captions in that language.
+
+## Local addresses
+
+By default, `web_fetch` reads only public sites. It refuses this machine (`localhost`, `127.0.0.1`, `::1`) and private networks (`10.x`, `192.168.x` and similar), also when a public name or a redirect leads there. It always refuses link-local and cloud metadata addresses, such as `169.254.169.254`, whatever the settings.
 
 | Setting | Effect |
 | --- | --- |
-| `ANYFETCH_RENDERER=off` | Never start the renderer. |
-| `ANYFETCH_RENDERER=/path/to/lightpanda` | Use this program. |
+| `ANYFETCH_ALLOW_LOCALHOST=1` | Allows URLs on this machine that you or the agent give, such as a dev server at `http://127.0.0.1:3000`. Private networks stay refused. Use this one to debug a local project. |
+| `ANYFETCH_ALLOW_PRIVATE=1` | Allows URLs on this machine and on private networks that you or the agent give. |
+| `ANYFETCH_DANGEROUSLY_ALLOW_PUBLIC_TO_PRIVATE_REDIRECTS=1` | Dangerous. Also lets any public website redirect Anyfetch to this machine or your network, so a page can make Anyfetch read your router, NAS or local services and hand the result to the agent. Includes `ANYFETCH_ALLOW_PRIVATE=1`. Leave it off. |
 
-Notes:
+How the rules apply:
 
-- Lightpanda makes its own requests. It is not used together with a proxy, and a site with a bot check can refuse it.
-- A rendered application page, such as a feed or a listing, comes back as the whole page in Markdown.
+- Each step of a request is judged by the page that sends it. A redirect, or the next request of a bot check, may lead to this machine or a private network only from a page there, and only if a setting allows the target. A public page that redirects there gets `blocked_address`, unless the dangerous setting is on.
+- A public name that resolves to an address on this machine or a private network counts as that address. A name without a dot, or under `.local` or `.internal`, counts as private for the renderer and the browser.
+- The JavaScript renderer and the browser fallback open a page on this machine or a private network only when a setting allows it and the fetch started there, or with the dangerous setting. They make their own requests, so they are judged by where the fetch started, not by each step; see the notes in [Browser fallback](#browser-fallback). The Cloudflare browser opens only public sites.
+- A SearXNG instance may be on this machine or your network without any setting. Its redirects follow the same rules.
 
-## Use a proxy
+## Tool schemas
 
-Some sites refuse cloud server addresses whatever the request looks like. If your agent runs on a server, send Anyfetch through a residential proxy. Put one line in `~/.config/anyfetch/proxy`:
+Every tool parameter has exactly one JSON schema `type`: no type arrays, no `anyOf`, `oneOf`, `allOf` or `$ref`. Enums are strings. Strict clients, such as those that take only an OpenAPI subset, accept the schemas, and agent harnesses no longer show params as "unknown".
 
-```
-host:port:username:password
-```
+- `render`, `out` and `preview` are strings. `out: "true"` means `.anyfetch/`, not a file named `true`.
+- The JSON forms still work: `true`, `false`, numbers and `[start, count]`.
+- `provider` and `time` list their values in the schema.
 
-Anyfetch then sends every search and fetch through that HTTP proxy. The file holds the password in plain text, so keep it private: `chmod 600 ~/.config/anyfetch/proxy`. Delete the file to go direct again.
+## Limits
 
-Some sites accept your own address and refuse the proxy's address. To reach both kinds, add a second line with the word `direct`. Anyfetch then tries the proxy first, and asks the site directly when the proxy route is refused.
-
-Need a proxy? Use [NobleProxy](https://nobleproxy.com/?utm_source=anyfetch&utm_medium=readme&utm_campaign=anyfetch), our own service. In our test, one NobleProxy address took Anyfetch from 82 to 87 of the 97 sites, with the same result in every run. It opened The Wall Street Journal, Tripadvisor, Yelp, Etsy and Bandcamp, which refuse a server address. You get a static residential IP that only you use, with unlimited bandwidth and HTTP support.
-
-## What it does not do
-
-Anyfetch itself does not run JavaScript, solve CAPTCHAs or log in. A page that shows its content only after its scripts run, with no data inside the HTML and no public API, returns its title and description unless Lightpanda is installed. It reads what a site sends to a first-time visitor. A page that needs a CAPTCHA, an account or a subscription to load stays closed, and Anyfetch says so with an error code.
-
-Does your agent need a real browser, with logins and saved sessions? Use [AliasMode](https://aliasmode.com/use-cases/ai-agents/). It is our free, open-source antidetect browser, and it has its own MCP server for agents.
-
-## Benchmark
-
-The numbers at the top come from two scripts and one question set in [`bench/`](bench).
-
-- **Pages read.** `bench/bench.py` reads each of the 97 sites in [`bench/sites.txt`](bench/sites.txt) once with each tool. A page counts as read when the tool returns at least 500 characters of text and the text is not a bot check. The same rule is applied to every tool. Anyfetch ran three times and read 82, 81 and 82 pages; the table shows the middle run. Through a [NobleProxy](https://nobleproxy.com/?utm_source=anyfetch&utm_medium=readme&utm_campaign=anyfetch) static residential IP, a fixed address of a US cable provider, with the `direct` line in the proxy file, it read 87 pages in each of three runs. The proxy added The Wall Street Journal, Tripadvisor, Yelp, Etsy and Bandcamp. The other tools were not tested through the proxy. Claude Code's `WebFetch` cannot be scripted, so an agent called it once per site and recorded if real content came back.
-- **Time and memory.** `bench/speed.py` reads 10 pages with each program, started fresh for every page, and reports the median.
-
-- **Research questions.** [`bench/tasks.json`](bench/tasks.json) has 33 questions. Each has one exact answer and the sentence on the source page that proves it. The pages are from July to October 2026, so a model cannot answer from memory. A Claude Sonnet agent answered the questions with Anyfetch only, and again with the built-in `WebSearch` and `WebFetch` of Claude Code only. The instructions were the same: at most 8 web calls for each question, and the answer `UNKNOWN` when the tools do not give it. Anyfetch ran with no proxy, no Firefox and no Lightpanda. Each tool ran twice, and a question counts when both runs are correct.
-
-| Question group | Anyfetch | Built-in tools |
-| --- | --- | --- |
-| A page on a site that blocks AI agents | 12 of 13 | 7 of 13 |
-| A page on an open site | 10 of 10 | 10 of 10 |
-| No URL: search first, then read | 10 of 10 | 10 of 10 |
-
-In single runs, Anyfetch answered 32 and 33 questions, and the built-in tools 28 and 27. The one Anyfetch miss was a Reddit thread: Reddit limited the rate of the test machine that day, and in one run Anyfetch read a link from a comment in place of the link of the post.
-
-Three things to know about this test. The question writer used Anyfetch to check each answer, so the first group has only pages that Anyfetch can read. The Financial Times was on the writer's list and has no question: its articles need a subscription. Thirty of the questions are one day older than the test; 28 of their answers were checked on the source page again that day. Every answer is in [`bench/results/tasks.tsv`](bench/results/tasks.tsv).
-
-We also read the same 97 sites with eight other tools, each with its default settings and no API key:
-
-| Tool | Pages read |
+| Limit | Value |
 | --- | --- |
-| **Anyfetch** | **82** |
-| Exa MCP (hosted, answers from stored copies) | 78 |
-| Scrapling, stealth browser | 71 |
-| Scrapling, plain HTTP | 69 |
-| Hermes Agent `web_extract` (hosted readers) | 68 |
-| Crawl4AI | 66 |
-| Jina Reader | 61 |
-| Playwright MCP | 52 |
-| DuckDuckGo MCP server | 49 |
+| Response body | 20 MB, then `too_large`. |
+| One fetch, overall | 90 seconds. |
+| `web_fetch_many` | At most 20 URLs, 8 fetched at a time. |
+| `web_search` `page` | At most 100, then `invalid_request`. |
 
-How each one ran, and what to know before you compare, is in [`bench/other-tools/NOTES.md`](bench/other-tools/NOTES.md). The full ranking with every site is on [aliasmode.com](https://aliasmode.com/anyfetch/best-web-fetch-tools-for-ai-agents/).
+## Errors
 
-The per-site results are in [`bench/results/`](bench/results). Sites change their rules often, and results differ between networks, so run it yourself:
+Codes added by this fork, on top of the [upstream codes](README-OG.md#errors):
 
-```sh
-python3 bench/bench.py anyfetch curl
-pip install mcp-server-fetch && python3 bench/bench.py reference
-python3 bench/speed.py /path/to/chromium
-```
+| Code | Meaning |
+| --- | --- |
+| `blocked_address` | The URL, a redirect, the name's address or the page the browser ended on leads to a link-local or cloud metadata address, or to this machine or a private network that no [setting](#local-addresses) allows. The message names the setting that would. |
+| `browser_unavailable` | The browser fallback cannot start. The message lists the steps. See [Browser fallback](#browser-fallback). |
+| `render_failed` | The renderer or the browser could not load the page. |
+| `renderer_missing` | `render` is `"true"` and no renderer is available. |
+| `no_match` | The `selector` matched nothing. |
+| `not_json` | `format` is `json` and the body does not parse. |
+| `jq_unavailable` | The jq process could not start. |
+| `transcript_unavailable` | yt-dlp is missing or failed, or the video has no captions in that language. |
+| `write_failed` | `out` could not write the file. |
+| `too_large` | The response body, or the jq output, is over 20 MB. |
+| `invalid_request` | A bad input, such as a bad selector or an `out` path that breaks the rules. |
 
 ## Build from source
 
 You need Rust 1.98, `cmake` and `clang` (the TLS library is BoringSSL). On Windows you also need NASM.
-
-```sh
-cargo install --git https://github.com/aliasmode/anyfetch
-```
-
-## License
-
-Apache-2.0
+Use whichever suited for your scenario: 
+- `cargo install --git https://github.com/aliasmode/anyfetch`
+- ` cargo build --release`
+- `sudo cargo install --path .`

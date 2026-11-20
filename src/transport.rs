@@ -3,9 +3,22 @@ use crate::{
     clearance::{self, Clearance},
 };
 use encoding_rs::{Encoding, UTF_8};
-use std::{path::Path, sync::Arc, time::Duration};
+use futures_util::StreamExt;
+use std::{
+    collections::HashMap,
+    error::Error,
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
+    path::Path,
+    sync::{Arc, Mutex as StdMutex},
+    time::Duration,
+};
 use url::{Host, Url};
-use wreq::{Client, NoProxy, Proxy, Response, cookie::Jar};
+use wreq::{
+    Client, NoProxy, Proxy, Response,
+    cookie::Jar,
+    dns::{Addrs, Name, Resolve, Resolving},
+    redirect,
+};
 use wreq_util::{Emulation, Platform, Profile};
 
 /// Browser identities in the order tried. Measured on 97 bot-filtered sites (2026-10-11), Safari
@@ -21,11 +34,16 @@ pub(crate) const TIMEOUT: Duration = Duration::from_secs(30);
 /// The identity for requests that carry a clearance from the user's Firefox.
 const FIREFOX: (Profile, Platform) = (Profile::Firefox151, Platform::Linux);
 
+/// The largest answer read into memory.
+pub(crate) const MAX_BODY: usize = 20 * 1024 * 1024;
+
 fn client(
     (profile, platform): (Profile, Platform),
     cleared: Option<(&Clearance, &str)>,
     direct: bool,
-) -> Result<(Client, Arc<Jar>), ToolError> {
+    local: bool,
+) -> Result<(Client, Arc<Jar>, Arc<Scope>), ToolError> {
+    let scope = Arc::new(Scope::new(Rules::from_env(local)));
     let jar = Arc::new(Jar::default());
     for cookie in cleared.iter().flat_map(|(clearance, _)| &clearance.cookies) {
         let (name, value) = (&cookie.name, &cookie.value);
@@ -41,13 +59,380 @@ fn client(
                 .build(),
         )
         .cookie_provider(jar.clone())
-        .redirect(wreq::redirect::Policy::default())
+        .redirect(redirect::Policy::custom({
+            let scope = Arc::clone(&scope);
+            move |attempt| {
+                // The last address requested is the page that sent the redirect.
+                let from = attempt.previous.last().map(ToString::to_string);
+                match scope.hop(
+                    from.as_deref().unwrap_or_default(),
+                    &attempt.uri.to_string(),
+                ) {
+                    Ok(()) => redirect::Policy::default().redirect(attempt),
+                    Err(error) => attempt.error(error),
+                }
+            }
+        }))
         .timeout(TIMEOUT)
         .no_proxy();
+    // Through a proxy the proxy resolves names, so only the address checks in `Scope` apply.
     if !direct && let (Some(proxy), _) = proxy()? {
         builder = builder.proxy(proxy);
+    } else {
+        builder = builder.dns_resolver(Resolver(Arc::clone(&scope)));
     }
-    Ok((builder.build()?, jar))
+    Ok((builder.build()?, jar, scope))
+}
+
+/// Where an address leads, ordered from least to most restricted.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum Reach {
+    Public,
+    /// This machine: loopback, `localhost` names, and the unspecified address.
+    Loopback,
+    /// The local or a private network.
+    Private,
+    /// Link-local and cloud metadata addresses, never fetched.
+    Blocked,
+}
+
+fn ip_reach(address: IpAddr) -> Reach {
+    match address {
+        IpAddr::V4(address) => ipv4_reach(address),
+        IpAddr::V6(address) => match address.to_ipv4_mapped() {
+            Some(mapped) => ipv4_reach(mapped),
+            None => ipv6_reach(address),
+        },
+    }
+}
+
+fn ipv4_reach(address: Ipv4Addr) -> Reach {
+    let [first, second, ..] = address.octets();
+    // 100.100.100.200 is the Alibaba Cloud metadata service.
+    if address.is_link_local() || address == Ipv4Addr::new(100, 100, 100, 200) {
+        Reach::Blocked
+    } else if address.is_loopback() || address.is_unspecified() {
+        Reach::Loopback
+    } else if address.is_private()
+        // 100.64.0.0/10, carrier-grade NAT: the top two bits of the second octet are 01.
+        || (first == 100 && second & 0xc0 == 0x40)
+    {
+        Reach::Private
+    } else {
+        Reach::Public
+    }
+}
+
+fn ipv6_reach(address: Ipv6Addr) -> Reach {
+    let aws_metadata = Ipv6Addr::new(0xfd00, 0xec2, 0, 0, 0, 0, 0, 0x254);
+    let prefix = &address.segments()[..6];
+    // NAT64 (64:ff9b::/96) and IPv4-compatible (::a.b.c.d) addresses lead to the IPv4 address
+    // in their low 32 bits; `::` and `::1` keep their own meaning.
+    let nat64 = prefix == [0x64, 0xff9b, 0, 0, 0, 0];
+    let compatible = prefix == [0; 6] && !address.is_loopback() && !address.is_unspecified();
+    if nat64 || compatible {
+        // A translator elsewhere reaches the IPv4 address, so its loopback is not this machine.
+        return match ipv4_reach(Ipv4Addr::from_bits(address.to_bits() as u32)) {
+            Reach::Loopback => Reach::Private,
+            reach => reach,
+        };
+    }
+    if address.is_unicast_link_local() || address == aws_metadata {
+        Reach::Blocked
+    } else if address.is_loopback() || address.is_unspecified() {
+        Reach::Loopback
+    } else if address.is_unique_local() {
+        Reach::Private
+    } else {
+        Reach::Public
+    }
+}
+
+fn host_reach(host: &Host<&str>) -> Reach {
+    match host {
+        Host::Domain(domain) => {
+            let name = domain.trim_end_matches('.');
+            if matches!(name, "metadata" | "metadata.google.internal") {
+                Reach::Blocked
+            } else if name == "localhost" || name.ends_with(".localhost") {
+                Reach::Loopback
+            } else {
+                Reach::Public
+            }
+        }
+        Host::Ipv4(address) => ipv4_reach(*address),
+        Host::Ipv6(address) => ip_reach(IpAddr::V6(*address)),
+    }
+}
+
+pub(crate) const ALLOW_LOCALHOST: &str = "ANYFETCH_ALLOW_LOCALHOST";
+pub(crate) const ALLOW_PRIVATE: &str = "ANYFETCH_ALLOW_PRIVATE";
+pub(crate) const PUBLIC_TO_PRIVATE: &str = "ANYFETCH_DANGEROUSLY_ALLOW_PUBLIC_TO_PRIVATE_REDIRECTS";
+
+fn flag(name: &str) -> bool {
+    std::env::var_os(name).is_some_and(|value| value == "1")
+}
+
+/// Which addresses off the public web may be reached. Link-local and metadata addresses never are.
+/// The agent's own URLs, and pages off the public web, may lead to what the user allowed; a public
+/// site may lead off it only with `public_to_private`.
+#[derive(Clone, Copy, Debug, Default)]
+struct Rules {
+    /// This machine: `ANYFETCH_ALLOW_LOCALHOST=1`.
+    localhost: bool,
+    /// This machine and private networks: `ANYFETCH_ALLOW_PRIVATE=1`, or a server of the user's
+    /// such as their SearXNG.
+    private: bool,
+    /// A public site may send anyfetch to both. Includes `private`.
+    public_to_private: bool,
+}
+
+/// Who sends a request: the agent, or a page at a public address or one off the public web.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Origin {
+    Agent,
+    Public,
+    Private,
+}
+
+impl Rules {
+    fn from_env(local: bool) -> Self {
+        let public_to_private = flag(PUBLIC_TO_PRIVATE);
+        Self {
+            localhost: flag(ALLOW_LOCALHOST),
+            private: local || public_to_private || flag(ALLOW_PRIVATE),
+            public_to_private,
+        }
+    }
+
+    /// Refuses a request from `origin` to `target`, which leads to `reach`.
+    fn admit(self, origin: Origin, reach: Reach, target: &str) -> Result<(), ToolError> {
+        match reach {
+            Reach::Public => Ok(()),
+            Reach::Blocked => Err(blocked(target, reach)),
+            _ if self.public_to_private => Ok(()),
+            _ if origin == Origin::Public => Err(redirected(target)),
+            Reach::Loopback if self.localhost || self.private => Ok(()),
+            Reach::Private if self.private => Ok(()),
+            _ => Err(blocked(target, reach)),
+        }
+    }
+}
+
+fn blocked(target: &str, reach: Reach) -> ToolError {
+    let message = match reach {
+        Reach::Loopback => format!(
+            "{target} is on this machine. {ALLOW_LOCALHOST}=1 allows this machine, \
+             {ALLOW_PRIVATE}=1 also private networks"
+        ),
+        Reach::Private => format!(
+            "{target} is on a local or private network. {ALLOW_PRIVATE}=1 allows local and private networks"
+        ),
+        _ => format!("{target} is a link-local or cloud metadata address, which is never fetched"),
+    };
+    ToolError::new("blocked_address", message)
+}
+
+fn redirected(target: &str) -> ToolError {
+    ToolError::new(
+        "blocked_address",
+        format!(
+            "{target} is on this machine or a private network, and a public site sent anyfetch there. \
+             {ALLOW_LOCALHOST}=1 and {ALLOW_PRIVATE}=1 do not allow that. {PUBLIC_TO_PRIVATE}=1 does, \
+             and lets any website make anyfetch read your router and local services"
+        ),
+    )
+}
+
+/// The rules of one client, and where its current request comes from.
+struct Scope {
+    rules: Rules,
+    origin: StdMutex<Origin>,
+    /// Names that resolved to an address on this machine or a private network, and the most
+    /// restricted reach of their addresses. A pooled connection skips `Resolver`, so these count.
+    private_names: StdMutex<HashMap<String, Reach>>,
+}
+
+impl Scope {
+    fn new(rules: Rules) -> Self {
+        Self {
+            rules,
+            origin: StdMutex::new(Origin::Agent),
+            private_names: StdMutex::default(),
+        }
+    }
+
+    /// Where `host` leads: by itself, or by the addresses its name resolved to for this client.
+    fn reach(&self, host: &Host<&str>) -> Reach {
+        let own = host_reach(host);
+        let Host::Domain(domain) = host else {
+            return own;
+        };
+        let names = self.private_names.lock().expect("names lock");
+        names
+            .get(&name_key(domain))
+            .map_or(own, |&resolved| own.max(resolved))
+    }
+
+    fn origin(&self) -> Origin {
+        *self.origin.lock().expect("origin lock")
+    }
+
+    /// A request that anyfetch makes for the agent: refuses `url` by its host.
+    fn begin(&self, url: &str) -> Result<(), ToolError> {
+        *self.origin.lock().expect("origin lock") = Origin::Agent;
+        self.check(url)
+    }
+
+    /// The page at `from` sends the next request to `to`, by a redirect or a bot check.
+    fn hop(&self, from: &str, to: &str) -> Result<(), ToolError> {
+        let origin = if self.leads_private(from) {
+            Origin::Private
+        } else {
+            Origin::Public
+        };
+        *self.origin.lock().expect("origin lock") = origin;
+        self.check(to)
+    }
+
+    fn check(&self, url: &str) -> Result<(), ToolError> {
+        // An address that does not parse fails in the request itself.
+        let Ok(parsed) = Url::parse(url) else {
+            return Ok(());
+        };
+        match parsed.host() {
+            Some(host) => self.rules.admit(self.origin(), self.reach(&host), url),
+            None => Ok(()),
+        }
+    }
+
+    /// Whether the page at `url` is on this machine or a private network.
+    fn leads_private(&self, url: &str) -> bool {
+        let Ok(parsed) = Url::parse(url) else {
+            return false;
+        };
+        parsed.host().is_some_and(|host| off_web(self.reach(&host)))
+    }
+
+    /// Refuses the addresses of `name` that the current request may not go to, and remembers a
+    /// name that leads to this machine or a private network.
+    fn resolved(&self, name: &str, addresses: &[SocketAddr]) -> Result<(), ToolError> {
+        let origin = self.origin();
+        let mut worst = Reach::Public;
+        for address in addresses {
+            let reach = ip_reach(address.ip());
+            worst = worst.max(reach);
+            self.rules.admit(origin, reach, name)?;
+        }
+        if off_web(worst) {
+            let mut names = self.private_names.lock().expect("names lock");
+            names.insert(name_key(name), worst);
+        }
+        Ok(())
+    }
+}
+
+/// This machine or a private network.
+fn off_web(reach: Reach) -> bool {
+    matches!(reach, Reach::Loopback | Reach::Private)
+}
+
+fn name_key(name: &str) -> String {
+    name.trim_end_matches('.').to_ascii_lowercase()
+}
+
+/// Resolves names with the system and refuses the addresses that `Scope` refuses, so a public
+/// name that points at this machine or its network is caught too.
+struct Resolver(Arc<Scope>);
+
+impl Resolve for Resolver {
+    fn resolve(&self, name: Name) -> Resolving {
+        Box::pin(lookup(name, Arc::clone(&self.0)))
+    }
+}
+
+async fn lookup(name: Name, scope: Arc<Scope>) -> Result<Addrs, Box<dyn Error + Send + Sync>> {
+    let addresses: Vec<_> = tokio::net::lookup_host((name.as_str(), 0)).await?.collect();
+    scope.resolved(name.as_str(), &addresses)?;
+    Ok(Box::new(addresses.into_iter()))
+}
+
+/// Where `url` leads: by its host, then by every address of its name. A name that does not
+/// resolve, or that names a machine on the local network, leads there. `None` without a host.
+async fn url_reach(url: &Url) -> Option<Reach> {
+    let host = url.host()?;
+    let reach = host_reach(&host);
+    let Host::Domain(domain) = host else {
+        return Some(reach);
+    };
+    if reach != Reach::Public {
+        return Some(reach);
+    }
+    if local_name(domain) {
+        return Some(Reach::Private);
+    }
+    let addresses: Vec<_> = match tokio::net::lookup_host((domain, 0)).await {
+        Ok(addresses) => addresses.collect(),
+        Err(_) => Vec::new(),
+    };
+    if addresses.is_empty() {
+        return Some(Reach::Private);
+    }
+    addresses.iter().map(|address| ip_reach(address.ip())).max()
+}
+
+/// `public_site`, and every address of the name is public, even with `ANYFETCH_ALLOW_PRIVATE=1`.
+/// For the Cloudflare browser, which makes its own requests, so skips `Resolver`.
+pub(crate) async fn resolves_public(url: &str) -> bool {
+    match Url::parse(url) {
+        Ok(parsed) => url_reach(&parsed).await == Some(Reach::Public),
+        Err(_) => false,
+    }
+}
+
+/// A page at `start` counts as public unless it leads to this machine or a private network.
+async fn origin_of(start: &str) -> Origin {
+    let reach = match Url::parse(start) {
+        Ok(parsed) => url_reach(&parsed).await,
+        Err(_) => None,
+    };
+    if reach.is_some_and(off_web) {
+        Origin::Private
+    } else {
+        Origin::Public
+    }
+}
+
+/// Whether the renderer or the browser, which make their own requests and skip `Resolver`, may
+/// open `url` for a fetch that the agent started at `start`. The rules of redirects apply: a
+/// page off the public web needs the setting that allows it, and a `start` off the public web.
+pub(crate) async fn may_open(start: &str, url: &str) -> bool {
+    let web = Url::parse(url).is_ok_and(|parsed| matches!(parsed.scheme(), "http" | "https"));
+    web && judge(Rules::from_env(false), start, url).await.is_ok()
+}
+
+/// Refuses the page that the browser ended on, for a fetch that the agent started at `start`,
+/// when the rules of redirects would not let anyfetch go there. A page that is not on the
+/// network, such as `about:blank`, passes.
+pub(crate) async fn check_landing(start: &str, landed: &str) -> Result<(), ToolError> {
+    judge(Rules::from_env(false), start, landed).await
+}
+
+async fn judge(rules: Rules, start: &str, url: &str) -> Result<(), ToolError> {
+    let Ok(mut parsed) = Url::parse(url) else {
+        return Ok(());
+    };
+    // `blob:https://host/id` belongs to the page at its inner address.
+    if parsed.scheme() == "blob"
+        && let Ok(inner) = Url::parse(parsed.path())
+    {
+        parsed = inner;
+    }
+    if !matches!(parsed.scheme(), "http" | "https" | "ws" | "wss") {
+        return Ok(());
+    }
+    let reach = url_reach(&parsed).await.unwrap_or(Reach::Private);
+    rules.admit(origin_of(start).await, reach, url)
 }
 
 /// Optional HTTP proxy from `~/.config/anyfetch/proxy`: one `host:port:username:password` line.
@@ -93,7 +478,10 @@ async fn routed<F: Future<Output = Result<Body, ToolError>>>(
 ) -> Result<Body, ToolError> {
     let (proxy, both) = proxy()?;
     match request(proxy.is_none()).await {
-        Err(error) if both && refused(&error) => request(true).await.or(Err(error)),
+        Err(error) if both && refused(&error) => request(true).await.map_err(|direct| ToolError {
+            message: format!("{} Without the proxy: {}", error.message, direct.message),
+            ..error
+        }),
         result => result,
     }
 }
@@ -130,6 +518,16 @@ pub(crate) async fn get(url: &str, accept: fn(&str) -> bool) -> Result<Body, Too
     routed(|direct| attempt(url, accept, IDENTITIES[0], None, direct)).await
 }
 
+/// Like `get`, for a server of the user's, such as their SearXNG, that may run on this machine
+/// or its network. Link-local and metadata addresses stay refused.
+pub(crate) async fn get_local(url: &str, accept: fn(&str) -> bool) -> Result<Body, ToolError> {
+    routed(|direct| async move {
+        let (client, jar, scope) = client(IDENTITIES[0], None, direct, true)?;
+        open(&client, &jar, &scope, url, accept, None).await
+    })
+    .await
+}
+
 /// One request to a data address of a site, with the headers that the site's own pages send.
 /// Some of these answer only a visitor of the site: with `entry`, the same client opens that
 /// page first.
@@ -139,10 +537,11 @@ pub(crate) async fn get_with(
     entry: Option<&str>,
 ) -> Result<Body, ToolError> {
     routed(|direct| async move {
-        let (client, jar) = client(IDENTITIES[0], None, direct)?;
+        let (client, jar, scope) = client(IDENTITIES[0], None, direct, false)?;
         if let Some(entry) = entry {
-            open(&client, &jar, entry, |_| true, None).await?;
+            open(&client, &jar, &scope, entry, |_| true, None).await?;
         }
+        scope.begin(url)?;
         let mut request = client.get(url);
         for (name, value) in headers {
             request = request.header(*name, *value);
@@ -195,9 +594,12 @@ async fn page(
     }
     match result {
         Err(error) if cloudflare_challenge(&error) => {
-            let Some(browser) = browser.filter(|_| direct && public_site(url)) else {
+            let Some(browser) = browser.filter(|_| direct) else {
                 return Err(error);
             };
+            if !resolves_public(url).await {
+                return Err(error);
+            }
             match clearance::ensure(browser, url).await {
                 Ok(fresh) => attempt(url, accept, FIREFOX, Some(&fresh), direct).await,
                 Err(_) => Err(error),
@@ -227,15 +629,20 @@ pub(crate) fn direct() -> bool {
 
 /// The browser is kept away from addresses that are not public sites.
 pub(crate) fn public_site(url: &str) -> bool {
-    match Url::parse(url).ok().as_ref().and_then(Url::host) {
-        // A name without a dot is a machine on the local network.
-        Some(Host::Domain(domain)) => domain.contains('.') && domain != "localhost",
-        Some(Host::Ipv4(address)) => {
-            !(address.is_loopback() || address.is_private() || address.is_link_local())
-        }
-        Some(Host::Ipv6(address)) => !(address.is_loopback() || address.is_unique_local()),
-        None => false,
-    }
+    let Ok(url) = Url::parse(url) else {
+        return false;
+    };
+    let Some(host) = url.host() else {
+        return false;
+    };
+    let named_local = matches!(&host, Host::Domain(domain) if local_name(domain));
+    !named_local && host_reach(&host) == Reach::Public
+}
+
+/// A name of a machine on the local network: one without a dot, or under `.local` or `.internal`.
+fn local_name(domain: &str) -> bool {
+    let name = domain.trim_end_matches('.');
+    !name.contains('.') || name.ends_with(".local") || name.ends_with(".internal")
 }
 
 async fn attempt(
@@ -245,9 +652,10 @@ async fn attempt(
     cleared: Option<&Clearance>,
     direct: bool,
 ) -> Result<Body, ToolError> {
-    let (client, jar) = client(identity, cleared.map(|clearance| (clearance, url)), direct)?;
+    let cleared_for = cleared.map(|clearance| (clearance, url));
+    let (client, jar, scope) = client(identity, cleared_for, direct, false)?;
     let agent = cleared.map(|clearance| clearance.user_agent.as_str());
-    open(&client, &jar, url, accept, agent).await
+    open(&client, &jar, &scope, url, accept, agent).await
 }
 
 /// What a page asks a browser to do before it shows its content.
@@ -264,6 +672,7 @@ enum Check {
 async fn open(
     client: &Client,
     jar: &Jar,
+    scope: &Scope,
     url: &str,
     accept: fn(&str) -> bool,
     agent: Option<&str>,
@@ -272,6 +681,7 @@ async fn open(
         Some(agent) => client.get(target).header("user-agent", agent),
         None => client.get(target),
     };
+    scope.begin(url)?;
     let (body, check) = read(get(url).send().await?, false, accept).await?;
     let next = match check {
         None => return Ok(body),
@@ -287,11 +697,22 @@ async fn open(
             page.into()
         }
     };
+    // The page asks for the next request, as a redirect would.
+    scope.hop(&body.url, &next)?;
     let response = get(&next)
         .header("referer", &body.url)
         .send()
         .await
-        .map_err(|_| ToolError::new("network_error", "The request after the bot check failed"))?;
+        .map_err(|error| match ToolError::from(error) {
+            blocked @ ToolError {
+                code: "blocked_address",
+                ..
+            } => blocked,
+            other => ToolError::new(
+                "network_error",
+                format!("The request after the bot check failed: {}", other.message),
+            ),
+        })?;
     Ok(read(response, true, accept).await?.0)
 }
 
@@ -327,42 +748,53 @@ async fn read(
         });
     }
     let url = response.uri().to_string();
-    let bytes = response
-        .bytes()
-        .await
-        .map_err(|error| {
-            if completed {
-                ToolError::new("network_error", "Could not read Anubis completion response")
-            } else {
-                error.into()
-            }
-        })?
-        .to_vec();
+    let too_large = || ToolError {
+        status: Some(status),
+        ..ToolError::new(
+            "too_large",
+            format!("The answer is larger than {} MB", MAX_BODY / 1024 / 1024),
+        )
+    };
+    if response
+        .content_length()
+        .is_some_and(|length| length > MAX_BODY as u64)
+    {
+        return Err(too_large());
+    }
+    let mut bytes = Vec::new();
+    let mut stream = std::pin::pin!(response.bytes_stream());
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk?;
+        if bytes.len() + chunk.len() > MAX_BODY {
+            return Err(too_large());
+        }
+        bytes.extend_from_slice(&chunk);
+    }
     let body = Body {
         url,
         status,
         content_type,
         bytes,
     };
-    if is_html
-        && let Some(challenge) = anubis::parse(&body.text()).map_err(|mut error| {
-            error.status = Some(status);
-            error
-        })?
-    {
-        if completed {
-            return Err(ToolError {
-                status: Some(status),
-                ..ToolError::new(
-                    "challenge_failed",
-                    "Anubis challenge remains after completion",
-                )
-            });
-        }
-        return Ok((body, Some(Check::Anubis(challenge))));
-    }
     if is_html {
         let page = body.text();
+        if page.contains("anubis_challenge")
+            && let Some(challenge) = anubis::parse(&page).map_err(|mut error| {
+                error.status = Some(status);
+                error
+            })?
+        {
+            if completed {
+                return Err(ToolError {
+                    status: Some(status),
+                    ..ToolError::new(
+                        "challenge_failed",
+                        "Anubis challenge remains after completion",
+                    )
+                });
+            }
+            return Ok((body, Some(Check::Anubis(challenge))));
+        }
         let check = challenge::cookie(&page).map(Check::Cookie);
         if let Some(check) = check.or_else(|| challenge::doubled(&page).map(Check::Query)) {
             if completed {
@@ -419,3 +851,7 @@ pub fn check_response(response: &Response) -> Result<(), ToolError> {
             .map(str::to_owned),
     })
 }
+
+#[cfg(test)]
+#[path = "transport.test.rs"]
+mod tests;

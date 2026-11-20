@@ -1,10 +1,13 @@
-use crate::{ToolError, alternates, cache, focus, pdf, render, transport};
-use dom_query::{Document, NodeRef};
+use crate::{ToolError, alternates, cache, chromium, focus, pdf, render, transport};
+use clap::ValueEnum;
+use dom_query::{Document, Matcher, NodeRef};
 use dom_smoothie::Readability;
 use encoding_rs::{Encoding, UTF_8};
+use rmcp::schemars;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{
+    borrow::Cow,
     collections::HashSet,
     path::{Path, PathBuf},
 };
@@ -67,6 +70,110 @@ impl FetchResponse {
     }
 }
 
+/// What `content` holds.
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Deserialize, Serialize, ValueEnum, schemars::JsonSchema,
+)]
+#[serde(rename_all = "lowercase")]
+#[value(rename_all = "lower")]
+#[schemars(inline)]
+pub enum Format {
+    // Plain comments, as in search::Provider, keep the schema a list of names.
+    // The article as Markdown, or what a listing page shows.
+    #[default]
+    Readable,
+    // The whole page as Markdown.
+    Markdown,
+    // The words of the page, a line for each block, without Markdown or link targets.
+    Text,
+    // The HTML as served, or as rendered when render applies.
+    Html,
+    // The body parsed as JSON, pretty-printed.
+    Json,
+}
+
+/// Whether to run a page's scripts in the renderer before reading it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
+#[serde(from = "RenderRepr")]
+pub enum Render {
+    /// Only a page that is just scripts, and only if a renderer is installed.
+    #[default]
+    Auto,
+    /// Every HTML page. An error if no renderer is installed.
+    On,
+    /// Never.
+    Off,
+}
+
+/// Written by hand with one `type`: the derived schema of `RenderRepr` is an `anyOf`, which
+/// agent harnesses show as "unknown", and a `type` array is refused by some clients. JSON
+/// booleans are still accepted.
+impl schemars::JsonSchema for Render {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "Render".into()
+    }
+
+    fn inline_schema() -> bool {
+        true
+    }
+
+    fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        schemars::json_schema!({
+            "type": "string",
+            "enum": ["auto", "true", "false"],
+        })
+    }
+}
+
+/// How `render` is written: true, false or "auto" (the strings "true" and "false" too).
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum RenderRepr {
+    Flag(bool),
+    Word(RenderWord),
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum RenderWord {
+    Auto,
+    True,
+    False,
+}
+
+impl From<RenderRepr> for Render {
+    fn from(repr: RenderRepr) -> Self {
+        match repr {
+            RenderRepr::Flag(true) | RenderRepr::Word(RenderWord::True) => Self::On,
+            RenderRepr::Flag(false) | RenderRepr::Word(RenderWord::False) => Self::Off,
+            RenderRepr::Word(RenderWord::Auto) => Self::Auto,
+        }
+    }
+}
+
+impl std::str::FromStr for Render {
+    type Err = String;
+
+    fn from_str(text: &str) -> Result<Self, String> {
+        match text.to_ascii_lowercase().as_str() {
+            "auto" => Ok(Self::Auto),
+            "true" => Ok(Self::On),
+            "false" => Ok(Self::Off),
+            _ => Err(format!("expected true, false or auto, not {text}")),
+        }
+    }
+}
+
+impl Render {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::On => "true",
+            Self::Off => "false",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Default)]
 pub struct Options<'a> {
     /// A Firefox-based browser that passes Cloudflare checks which plain requests cannot. See
@@ -75,16 +182,31 @@ pub struct Options<'a> {
     /// A program that runs a page's scripts and prints the finished HTML, for pages that hold
     /// no text without them. See [`crate::render::renderer`].
     pub renderer: Option<&'a Path>,
+    /// A Chromium-based browser: runs scripts when `renderer` is missing or fails, and reads
+    /// pages that refuse plain requests. See [`crate::chromium`].
+    pub chromium: bool,
+    /// yt-dlp, which YouTube transcripts need.
+    pub yt_dlp: Option<&'a Path>,
+    /// Caption language of a YouTube transcript. Default `en`.
+    pub lang: Option<&'a str>,
     /// Keep a copy of each public page for 15 minutes and answer from it.
     pub cache: bool,
     /// Fetch the page again and replace the copy.
     pub fresh: bool,
+    pub format: Format,
+    /// A CSS selector for an HTML page, or a jq program (jaq) for JSON: keep only what matches.
+    /// Ignored on other pages that are not HTML.
+    pub selector: Option<&'a str>,
+    /// Run the page's scripts in the renderer: see [`Render`].
+    pub render: Render,
 }
 
 /// The helper programs found on this machine.
 pub struct Helpers {
     browser: Option<PathBuf>,
     renderer: Option<PathBuf>,
+    chromium: bool,
+    yt_dlp: Option<PathBuf>,
 }
 
 impl Helpers {
@@ -92,45 +214,100 @@ impl Helpers {
         Self {
             browser: crate::clearance::browser(),
             renderer: render::renderer(),
+            chromium: chromium::enabled(),
+            yt_dlp: alternates::yt_dlp(),
         }
     }
 
     /// Options for a fetch that uses the helpers and the page cache.
-    pub fn options(&self, fresh: bool) -> Options<'_> {
+    pub fn options<'a>(
+        &'a self,
+        fresh: bool,
+        format: Format,
+        selector: Option<&'a str>,
+        lang: Option<&'a str>,
+        render: Render,
+    ) -> Options<'a> {
         Options {
             browser: self.browser.as_deref(),
             renderer: self.renderer.as_deref(),
+            chromium: self.chromium,
+            yt_dlp: self.yt_dlp.as_deref(),
+            lang,
             cache: true,
             fresh,
+            format,
+            selector,
+            render,
         }
     }
+}
+
+/// An empty text is the same as none.
+pub fn non_empty(text: Option<&str>) -> Option<&str> {
+    text.filter(|text| !text.is_empty())
+}
+
+/// The cache key of a fetch: the plain URL for the default case, else a JSON list of everything
+/// that changes the processed content (JSON quoting keeps the parts from running together).
+fn cache_key(url: &str, options: &Options<'_>) -> String {
+    let readable = options.format == Format::Readable && options.selector.is_none();
+    if readable && options.render == Render::Auto && !alternates::is_youtube(url) {
+        return url.to_owned();
+    }
+    let lang = (readable && alternates::is_youtube(url)).then(|| options.lang.unwrap_or("en"));
+    let selector = non_empty(options.selector);
+    serde_json::to_string(&(url, options.format, selector, options.render.as_str(), lang))
+        .expect("a key serializes")
 }
 
 pub async fn fetch(url: &str) -> Result<FetchResponse, ToolError> {
     fetch_with(url, Options::default()).await
 }
 
+/// Longest a fetch may take with all its retries, browser, renderer and proxy fallback.
+const FETCH_DEADLINE: std::time::Duration = std::time::Duration::from_secs(90);
+
 pub async fn fetch_with(url: &str, options: Options<'_>) -> Result<FetchResponse, ToolError> {
+    tokio::time::timeout(FETCH_DEADLINE, fetch_cached(url, options))
+        .await
+        .unwrap_or_else(|_| {
+            Err(ToolError::new(
+                "timeout",
+                "The page took longer than 90 seconds to fetch",
+            ))
+        })
+}
+
+async fn fetch_cached(url: &str, options: Options<'_>) -> Result<FetchResponse, ToolError> {
     let cache = options.cache && transport::public_site(url);
+    // The copy holds processed content, so each format and selector needs a copy of its own.
+    let key = cache_key(url, &options);
     if cache
         && !options.fresh
-        && let Some(page) = cache::get(url)
+        && let Some(page) = cache::get(&key)
     {
         return Ok(page);
     }
     let page = download(url, options).await?;
     if cache {
-        cache::put(&page);
+        cache::put(&key, &page);
     }
     Ok(page)
 }
 
-/// Fetches several pages at the same time. Results are in the order of `urls`.
+/// Fetches several pages at the same time, at most 8 at once. Results are in the order of `urls`.
 pub async fn fetch_many(
     urls: &[String],
     options: Options<'_>,
 ) -> Vec<Result<FetchResponse, ToolError>> {
-    futures_util::future::join_all(urls.iter().map(|url| fetch_with(url, options))).await
+    use futures_util::StreamExt;
+    // Collected first: a closure in the stream type breaks the `Send` proof of the tool futures.
+    let fetches: Vec<_> = urls.iter().map(|url| fetch_with(url, options)).collect();
+    futures_util::stream::iter(fetches)
+        .buffered(8)
+        .collect()
+        .await
 }
 
 /// The JSON answer for several pages: each entry is the page, cut to `max_chars`, or its error.
@@ -158,8 +335,12 @@ pub fn pages(
 }
 
 async fn download(url: &str, options: Options<'_>) -> Result<FetchResponse, ToolError> {
-    if let Ok(parsed) = url::Url::parse(url)
-        && let Some(page) = alternates::read(&parsed).await
+    // Site APIs and site parsers give an article, not the page as served.
+    let readable = options.format == Format::Readable && options.selector.is_none();
+    if readable
+        && let Ok(parsed) = url::Url::parse(url)
+        && let Some(page) =
+            alternates::read_page(&parsed, options.lang.unwrap_or("en"), options.yt_dlp).await?
     {
         return Ok(FetchResponse {
             requested_url: url.to_owned(),
@@ -176,15 +357,31 @@ async fn download(url: &str, options: Options<'_>) -> Result<FetchResponse, Tool
     }
     let address = alternates::same_page(url);
     let address = address.as_deref().unwrap_or(url);
-    let response = transport::get_page(address, supported, options.browser).await?;
+    let (response, from_browser) =
+        match transport::get_page(address, supported, options.browser).await {
+            Err(error) if options.chromium && refused(&error) => {
+                (in_browser(address, error).await?, true)
+            }
+            result => (result?, false),
+        };
     let final_url = response.url;
     let status = response.status;
-    let content_type = response.content_type;
+    let mut content_type = response.content_type;
     let mime = content_type.parse::<mime::Mime>().ok();
     let media_type = mime.as_ref().map_or("", mime::Mime::essence_str);
     let is_html = matches!(media_type, "text/html" | "application/xhtml+xml");
+    let is_json = media_type == "application/json" || media_type.ends_with("+json");
     let bytes = response.bytes;
-    let (title, description, content) = if media_type == "application/pdf" {
+    // A selector applies to HTML and JSON; any other body comes back whole.
+    let (title, description, content) = if options.format == Format::Json
+        || (is_json && options.selector.is_some())
+    {
+        let body = decode(&bytes, mime.as_ref(), is_html).into_owned();
+        let program = options.selector.unwrap_or(".");
+        let content = crate::jq::run(body, program.to_owned()).await?;
+        content_type = "application/json".to_owned();
+        (None, None, content)
+    } else if media_type == "application/pdf" {
         let parsed = tokio::task::spawn_blocking(move || pdf::read(&bytes)).await;
         let document = parsed
             .unwrap_or(Err("The PDF is damaged"))
@@ -202,38 +399,94 @@ async fn download(url: &str, options: Options<'_>) -> Result<FetchResponse, Tool
         }
         (document.title, None, content.join("\n\n"))
     } else {
-        let encoding = Encoding::for_bom(&bytes)
-            .map(|(encoding, _)| encoding)
-            .or_else(|| mime.as_ref().and_then(charset))
-            .or_else(|| if is_html { html_charset(&bytes) } else { None })
-            .unwrap_or(UTF_8);
-        let (body, _, _) = encoding.decode(&bytes);
+        let mut body = decode(&bytes, mime.as_ref(), is_html);
         if is_html {
-            let own = alternates::parse(&final_url, &body).map(|page| Extracted {
-                title: page.title,
-                description: None,
-                content: page.content,
-                summary_only: false,
-            });
-            let mut extracted = own.map_or_else(|| extract(&body, &final_url), Ok);
-            // A page with no article and no data needs its scripts. Run them when a renderer
-            // is installed; it makes its own request, so not behind a proxy.
-            let shell = extracted.as_ref().map_or(true, |page| page.summary_only);
-            if shell
-                && let Some(renderer) = options.renderer
-                && transport::direct()
-                && let Some(html) = render::render(renderer, &final_url).await
-                && let Some(page) = extract_rendered(&html, &final_url)
-                && page.content.len() > extracted.as_ref().map_or(0, |plain| plain.content.len())
-            {
-                extracted = Ok(page);
+            let forced = options.render == Render::On;
+            let can_render = options.renderer.is_some() || options.chromium;
+            if forced && !can_render {
+                return Err(ToolError::new(
+                    "renderer_missing",
+                    "render is true, but no renderer is installed; install Lightpanda, set ANYFETCH_RENDERER, or allow the Chromium fallback",
+                ));
             }
-            let extracted = extracted?;
-            (
-                Some(extracted.title),
-                extracted.description,
-                extracted.content,
-            )
+            let own = readable
+                .then(|| alternates::parse(&final_url, &body))
+                .flatten()
+                .map(|page| Extracted {
+                    title: page.title,
+                    description: None,
+                    content: page.content,
+                    summary_only: false,
+                });
+            // Readability is needed for the article, and to tell a page that is only scripts.
+            let detect = can_render && !from_browser && options.render == Render::Auto;
+            let mut extracted =
+                (readable || detect).then(|| own.map_or_else(|| extract(&body, &final_url), Ok));
+            // A page with no article and no data needs its scripts. Run them when a renderer
+            // is installed; it makes its own request, so not behind a proxy. Only the page address
+            // is checked: its scripts can still reach other hosts.
+            let shell = extracted
+                .as_ref()
+                .is_some_and(|plain| plain.as_ref().map_or(true, |page| page.summary_only));
+            // A page from the browser already ran its scripts.
+            let wanted = !from_browser
+                && match options.render {
+                    Render::Off => false,
+                    Render::On => true,
+                    Render::Auto => shell,
+                };
+            if wanted && can_render {
+                let allowed = transport::direct() && transport::may_open(address, &final_url).await;
+                if !allowed && forced {
+                    return Err(ToolError::new(
+                        "blocked_address",
+                        "render is true, but the page cannot be rendered: its address is not public and no setting allows it, or requests go through a proxy",
+                    ));
+                }
+                let rendered = match allowed {
+                    false => None,
+                    true => match run_scripts(options, address, &final_url).await {
+                        Ok(html) => html,
+                        Err(error) if forced => return Err(error),
+                        Err(_) => None,
+                    },
+                };
+                if forced && rendered.is_none() {
+                    return Err(ToolError::new(
+                        "render_failed",
+                        "The renderer returned no page",
+                    ));
+                }
+                if let Some(html) = rendered {
+                    let page = (readable || !forced)
+                        .then(|| extract_rendered(&html, &final_url))
+                        .flatten();
+                    let plain = extracted
+                        .as_ref()
+                        .and_then(|plain| plain.as_ref().ok())
+                        .map_or(0, |plain| plain.content.len());
+                    // A page that scripts did not fill stays as it was, unless render is true.
+                    let better = page.as_ref().is_some_and(|page| page.content.len() > plain);
+                    if forced || better {
+                        if let Some(page) = page {
+                            extracted = Some(Ok(page));
+                        }
+                        body = Cow::Owned(html);
+                    }
+                }
+            }
+            let page = if readable {
+                extracted.expect("a readable page is extracted")?
+            } else {
+                content_type = match options.format {
+                    Format::Html => "text/html",
+                    Format::Text => "text/plain",
+                    _ => "text/markdown",
+                }
+                .to_owned();
+                convert(&body, options.format, options.selector)?
+            };
+            (Some(page.title), page.description, page.content)
         } else {
             (None, None, body.into_owned())
         }
@@ -252,6 +505,68 @@ async fn download(url: &str, options: Options<'_>) -> Result<FetchResponse, Tool
     })
 }
 
+/// The page after its scripts ran: in Lightpanda, then in a Chromium-based browser. `start` is
+/// the address the fetch began at, which sets where the browser may end up.
+async fn run_scripts(
+    options: Options<'_>,
+    start: &str,
+    url: &str,
+) -> Result<Option<String>, ToolError> {
+    if let Some(renderer) = options.renderer
+        && let Some(html) = render::render(renderer, url).await
+    {
+        return Ok(Some(html));
+    }
+
+    if !options.chromium {
+        return Ok(None);
+    }
+
+    browse(start, url).await.map(|page| Some(page.html))
+}
+
+/// Loads `url` in the browser, and discards a page that it ended on off the public web when a
+/// redirect could not have led there.
+async fn browse(start: &str, url: &str) -> Result<chromium::Rendered, ToolError> {
+    let page = chromium::render(url).await?;
+    transport::check_landing(start, &page.url).await?;
+    Ok(page)
+}
+
+/// A refusal that a real browser may not get: a bot check, or 401, 403 or 503 to plain requests
+/// (Amazon refuses with 503).
+fn refused(error: &ToolError) -> bool {
+    matches!(error.code, "challenge_required" | "challenge_failed")
+        || (error.code == "http_error" && matches!(error.status, Some(401 | 403 | 503)))
+}
+
+/// Reads a page that refused plain requests in the browser. The first error stays when the
+/// browser cannot help.
+async fn in_browser(url: &str, error: ToolError) -> Result<transport::Body, ToolError> {
+    if !(transport::direct() && transport::may_open(url, url).await) {
+        return Err(error);
+    }
+
+    let failed = |why: String| ToolError {
+        message: format!(
+            "{}. The browser fallback failed too: {why}",
+            error.message.trim_end_matches('.')
+        ),
+        ..error.clone()
+    };
+    match browse(url, url).await {
+        Err(blocked) if blocked.code == "blocked_address" => Err(blocked),
+        Ok(page) if page.status >= 400 => Err(failed(format!("HTTP {}", page.status))),
+        Ok(page) => Ok(transport::Body {
+            url: page.url,
+            status: page.status,
+            content_type: "text/html; charset=utf-8".to_owned(),
+            bytes: page.html.into_bytes(),
+        }),
+        Err(fallback) => Err(failed(fallback.message)),
+    }
+}
+
 fn supported(media_type: &str) -> bool {
     media_type.starts_with("text/")
         || matches!(
@@ -262,34 +577,44 @@ fn supported(media_type: &str) -> bool {
         || media_type.ends_with("+xml")
 }
 
+fn decode<'a>(bytes: &'a [u8], mime: Option<&mime::Mime>, is_html: bool) -> Cow<'a, str> {
+    let encoding = Encoding::for_bom(bytes)
+        .map(|(encoding, _)| encoding)
+        .or_else(|| mime.and_then(charset))
+        .or_else(|| if is_html { html_charset(bytes) } else { None })
+        .unwrap_or(UTF_8);
+    encoding.decode(bytes).0
+}
+
 fn charset(mime: &mime::Mime) -> Option<&'static Encoding> {
     mime.get_param(mime::CHARSET)
         .and_then(|label| Encoding::for_label(label.as_str().as_bytes()))
 }
 
 fn html_charset(bytes: &[u8]) -> Option<&'static Encoding> {
-    let html = String::from_utf8_lossy(bytes);
+    // Like the HTML prescan, look only near the start instead of parsing the whole page.
+    let html = String::from_utf8_lossy(&bytes[..bytes.len().min(4096)]);
     let document = Document::from(html.as_ref());
-    for meta in document.select("meta").iter() {
+    let encoding = document.select("meta").iter().find_map(|meta| {
         if let Some(encoding) = meta
             .attr("charset")
             .and_then(|label| Encoding::for_label(label.as_bytes()))
         {
             return Some(encoding);
         }
-        if meta
-            .attr("http-equiv")
-            .is_some_and(|value| value.eq_ignore_ascii_case("content-type"))
-            && let Some(encoding) = meta
-                .attr("content")
-                .and_then(|value| value.parse::<mime::Mime>().ok())
-                .as_ref()
-                .and_then(charset)
-        {
-            return Some(encoding);
-        }
+        meta.attr("http-equiv")
+            .filter(|value| value.eq_ignore_ascii_case("content-type"))
+            .and(meta.attr("content"))
+            .and_then(|value| value.parse::<mime::Mime>().ok())
+            .as_ref()
+            .and_then(charset)
+    })?;
+    // The text was readable as ASCII, so a declared UTF-16 is wrong; the spec reads it as UTF-8.
+    if encoding == encoding_rs::UTF_16LE || encoding == encoding_rs::UTF_16BE {
+        Some(UTF_8)
+    } else {
+        Some(encoding)
     }
-    None
 }
 
 pub fn extract(html: &str, url: &str) -> Result<Extracted, ToolError> {
@@ -411,6 +736,142 @@ fn extract_rendered(html: &str, url: &str) -> Option<Extracted> {
     }
 }
 
+/// Elements that a page does not show as text.
+const UNSHOWN: [&str; 6] = ["head", "script", "style", "meta", "noscript", "template"];
+
+/// A page in `format`, whole or only the elements that match the CSS `selector`, in page
+/// order. `Readable` with a selector gives Markdown: Readability on a fragment finds no article.
+fn convert(html: &str, format: Format, selector: Option<&str>) -> Result<Extracted, ToolError> {
+    let document = Document::from(html);
+    let title = document.select("title").text().trim().to_owned();
+    let description = description(&document);
+    let nodes = match selector {
+        Some(selector) => {
+            let matcher = Matcher::new(selector).map_err(|_| {
+                ToolError::new(
+                    "invalid_request",
+                    format!("Not a valid CSS selector: {selector}"),
+                )
+            })?;
+            let matches = document.select_matcher(&matcher);
+            let ids: HashSet<_> = matches.nodes().iter().map(|node| node.id).collect();
+            // A match inside another match is already part of it.
+            let outer: Vec<_> = matches
+                .nodes()
+                .iter()
+                .filter(|node| {
+                    !node
+                        .ancestors_it(None)
+                        .any(|parent| ids.contains(&parent.id))
+                })
+                .cloned()
+                .collect();
+            if outer.is_empty() {
+                let message = format!("No element matches the selector {selector}");
+                return Err(ToolError::new("no_match", message));
+            }
+            outer
+        }
+        None => vec![document.root()],
+    };
+    let parts = nodes.iter().map(|node| match format {
+        Format::Html if selector.is_none() => html.to_owned(),
+        Format::Html => node.html().to_string(),
+        Format::Text => plain_text(node),
+        // An element's Markdown leaves out its own markup, such as the # of a heading.
+        _ if selector.is_some() => {
+            let fragment = Document::from(node.html().as_ref());
+            fragment.md(Some(&UNSHOWN)).trim().to_owned()
+        }
+        _ => node.md(Some(&UNSHOWN)).trim().to_owned(),
+    });
+    let parts: Vec<_> = parts.filter(|part| !part.is_empty()).collect();
+    let separator = if format == Format::Text || format == Format::Html {
+        "\n"
+    } else {
+        "\n\n"
+    };
+    Ok(Extracted {
+        title,
+        description,
+        content: parts.join(separator),
+        summary_only: false,
+    })
+}
+
+/// The words under `node`, a line for each block, with runs of white space made one space.
+fn plain_text(node: &NodeRef) -> String {
+    fn walk(node: &NodeRef, text: &mut String) {
+        const BLOCKS: [&str; 33] = [
+            "address",
+            "article",
+            "aside",
+            "blockquote",
+            "dd",
+            "details",
+            "dialog",
+            "div",
+            "dl",
+            "dt",
+            "fieldset",
+            "figcaption",
+            "figure",
+            "footer",
+            "form",
+            "h1",
+            "h2",
+            "h3",
+            "h4",
+            "h5",
+            "h6",
+            "header",
+            "hr",
+            "li",
+            "main",
+            "nav",
+            "ol",
+            "p",
+            "pre",
+            "section",
+            "table",
+            "tr",
+            "ul",
+        ];
+        for child in node.children() {
+            if child.is_text() {
+                for letter in child.text().chars() {
+                    if !letter.is_whitespace() {
+                        text.push(letter);
+                    } else if !text.ends_with([' ', '\n']) {
+                        text.push(' ');
+                    }
+                }
+                continue;
+            }
+            let Some(name) = child.node_name() else {
+                continue;
+            };
+            if UNSHOWN.contains(&&*name) {
+                continue;
+            }
+            let block = BLOCKS.contains(&&*name);
+            if block || &*name == "br" {
+                text.push('\n');
+            }
+            walk(&child, text);
+            if block {
+                text.push('\n');
+            } else if matches!(&*name, "td" | "th") {
+                text.push(' ');
+            }
+        }
+    }
+    let mut text = String::new();
+    walk(node, &mut text);
+    let lines = text.lines().map(str::trim).filter(|line| !line.is_empty());
+    lines.collect::<Vec<_>>().join("\n")
+}
+
 /// What a home page or a listing shows, as Markdown: its headings, text and links in page
 /// order, without scripts, styles, images, controls and navigation. Links are absolute.
 fn page_view(document: &Document, url: &str) -> String {
@@ -488,9 +949,12 @@ fn embedded_text(document: &Document) -> (Vec<String>, Vec<String>) {
         }
         let mut rest = &*source;
         while let Some(at) = rest.find("{\"") {
-            let assigned = rest[..at].trim_end().ends_with(['=', '(', ':']);
+            if !rest[..at].trim_end().ends_with(['=', '(', ':']) {
+                rest = &rest[at + 2..];
+                continue;
+            }
             let mut values = serde_json::Deserializer::from_str(&rest[at..]).into_iter();
-            match values.next().filter(|_| assigned) {
+            match values.next() {
                 Some(Ok(data)) => {
                     prose(&data, "", &mut found);
                     rich_text(&data, &mut bodies);
@@ -690,3 +1154,7 @@ fn code_text(node: &NodeRef, text: &mut String, pending: &mut bool, in_line: boo
         }
     }
 }
+
+#[cfg(test)]
+#[path = "fetch.test.rs"]
+mod tests;
