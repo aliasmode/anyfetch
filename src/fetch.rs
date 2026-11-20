@@ -1,4 +1,4 @@
-use crate::{ToolError, alternates, cache, focus, pdf, render, transport};
+use crate::{ToolError, alternates, cache, focus, pdf, playwright, render, transport};
 use clap::ValueEnum;
 use dom_query::{Document, Matcher, NodeRef};
 use dom_smoothie::Readability;
@@ -182,6 +182,9 @@ pub struct Options<'a> {
     /// A program that runs a page's scripts and prints the finished HTML, for pages that hold
     /// no text without them. See [`crate::render::renderer`].
     pub renderer: Option<&'a Path>,
+    /// A Chromium-based browser through Playwright: runs scripts when `renderer` is missing or
+    /// fails, and reads pages that refuse plain requests. See [`crate::playwright`].
+    pub playwright: bool,
     /// yt-dlp, which YouTube transcripts need.
     pub yt_dlp: Option<&'a Path>,
     /// Caption language of a YouTube transcript. Default `en`.
@@ -202,6 +205,7 @@ pub struct Options<'a> {
 pub struct Helpers {
     browser: Option<PathBuf>,
     renderer: Option<PathBuf>,
+    playwright: bool,
     yt_dlp: Option<PathBuf>,
 }
 
@@ -210,6 +214,7 @@ impl Helpers {
         Self {
             browser: crate::clearance::browser(),
             renderer: render::renderer(),
+            playwright: playwright::enabled(),
             yt_dlp: alternates::yt_dlp(),
         }
     }
@@ -226,6 +231,7 @@ impl Helpers {
         Options {
             browser: self.browser.as_deref(),
             renderer: self.renderer.as_deref(),
+            playwright: self.playwright,
             yt_dlp: self.yt_dlp.as_deref(),
             lang,
             cache: true,
@@ -351,7 +357,13 @@ async fn download(url: &str, options: Options<'_>) -> Result<FetchResponse, Tool
     }
     let address = alternates::same_page(url);
     let address = address.as_deref().unwrap_or(url);
-    let response = transport::get_page(address, supported, options.browser).await?;
+    let (response, from_browser) =
+        match transport::get_page(address, supported, options.browser).await {
+            Err(error) if options.playwright && refused(&error) => {
+                (in_browser(address, error).await?, true)
+            }
+            result => (result?, false),
+        };
     let final_url = response.url;
     let status = response.status;
     let mut content_type = response.content_type;
@@ -390,10 +402,11 @@ async fn download(url: &str, options: Options<'_>) -> Result<FetchResponse, Tool
         let mut body = decode(&bytes, mime.as_ref(), is_html);
         if is_html {
             let forced = options.render == Render::On;
-            if forced && options.renderer.is_none() {
+            let can_render = options.renderer.is_some() || options.playwright;
+            if forced && !can_render {
                 return Err(ToolError::new(
                     "renderer_missing",
-                    "render is true, but no renderer is installed; install Lightpanda or set ANYFETCH_RENDERER",
+                    "render is true, but no renderer is installed; install Lightpanda, set ANYFETCH_RENDERER, or allow the Playwright fallback",
                 ));
             }
             let own = readable
@@ -406,7 +419,7 @@ async fn download(url: &str, options: Options<'_>) -> Result<FetchResponse, Tool
                     summary_only: false,
                 });
             // Readability is needed for the article, and to tell a page that is only scripts.
-            let detect = options.renderer.is_some() && options.render == Render::Auto;
+            let detect = can_render && !from_browser && options.render == Render::Auto;
             let mut extracted =
                 (readable || detect).then(|| own.map_or_else(|| extract(&body, &final_url), Ok));
             // A page with no article and no data needs its scripts. Run them when a renderer
@@ -415,12 +428,14 @@ async fn download(url: &str, options: Options<'_>) -> Result<FetchResponse, Tool
             let shell = extracted
                 .as_ref()
                 .is_some_and(|plain| plain.as_ref().map_or(true, |page| page.summary_only));
-            let wanted = match options.render {
-                Render::Off => false,
-                Render::On => true,
-                Render::Auto => shell,
-            };
-            if wanted && let Some(renderer) = options.renderer {
+            // A page from the browser already ran its scripts.
+            let wanted = !from_browser
+                && match options.render {
+                    Render::Off => false,
+                    Render::On => true,
+                    Render::Auto => shell,
+                };
+            if wanted && can_render {
                 let allowed = transport::direct() && transport::resolves_public(&final_url).await;
                 if !allowed && forced {
                     return Err(ToolError::new(
@@ -428,10 +443,13 @@ async fn download(url: &str, options: Options<'_>) -> Result<FetchResponse, Tool
                         "render is true, but the page cannot be rendered: its address is not public, or requests go through a proxy",
                     ));
                 }
-                let rendered = if allowed {
-                    render::render(renderer, &final_url).await
-                } else {
-                    None
+                let rendered = match allowed {
+                    false => None,
+                    true => match run_scripts(options, &final_url).await {
+                        Ok(html) => html,
+                        Err(error) if forced => return Err(error),
+                        Err(_) => None,
+                    },
                 };
                 if forced && rendered.is_none() {
                     return Err(ToolError::new(
@@ -485,6 +503,54 @@ async fn download(url: &str, options: Options<'_>) -> Result<FetchResponse, Tool
         content,
         focused: false,
     })
+}
+
+/// The page after its scripts ran: in Lightpanda, then in a browser through Playwright.
+async fn run_scripts(options: Options<'_>, url: &str) -> Result<Option<String>, ToolError> {
+    if let Some(renderer) = options.renderer
+        && let Some(html) = render::render(renderer, url).await
+    {
+        return Ok(Some(html));
+    }
+
+    if !options.playwright {
+        return Ok(None);
+    }
+
+    playwright::render(url).await.map(|page| Some(page.html))
+}
+
+/// A refusal that a real browser may not get: a bot check, or 401, 403 or 503 to plain requests
+/// (Amazon refuses with 503).
+fn refused(error: &ToolError) -> bool {
+    matches!(error.code, "challenge_required" | "challenge_failed")
+        || (error.code == "http_error" && matches!(error.status, Some(401 | 403 | 503)))
+}
+
+/// Reads a page that refused plain requests in the browser. The first error stays when the
+/// browser cannot help.
+async fn in_browser(url: &str, error: ToolError) -> Result<transport::Body, ToolError> {
+    if !(transport::direct() && transport::resolves_public(url).await) {
+        return Err(error);
+    }
+
+    let failed = |why: String| ToolError {
+        message: format!(
+            "{}. The browser fallback failed too: {why}",
+            error.message.trim_end_matches('.')
+        ),
+        ..error.clone()
+    };
+    match playwright::render(url).await {
+        Ok(page) if page.status >= 400 => Err(failed(format!("HTTP {}", page.status))),
+        Ok(page) => Ok(transport::Body {
+            url: page.url,
+            status: page.status,
+            content_type: "text/html; charset=utf-8".to_owned(),
+            bytes: page.html.into_bytes(),
+        }),
+        Err(fallback) => Err(failed(fallback.message)),
+    }
 }
 
 fn supported(media_type: &str) -> bool {

@@ -37,7 +37,7 @@ Sites: measured on 2026-10-12 with version 0.8.0. Questions: measured on 2026-10
 - **Answers, not whole pages.** Give a question with the URL, and get only the parts of the page that match it. The Python 3.15 release notes are 218,000 characters; the answer to one question about them came back in 2,200.
 - **Clean Markdown.** Links, tables and code blocks stay intact. Long pages come in parts.
 - **PDFs.** Papers and reports come back as text, page by page.
-- **Sites that need JavaScript.** Anyfetch reads the data inside the page, and uses the site's public API or feed for Stack Overflow, Reddit, IMDb, X posts, PyPI and crates.io. A Reddit thread comes with every comment and its score. No browser runs. For pages that hold nothing without their scripts, it can use Lightpanda, an optional small engine. YouTube transcripts need yt-dlp on your `PATH`.
+- **Sites that need JavaScript.** Anyfetch reads the data inside the page, and uses the site's public API or feed for Stack Overflow, Reddit, IMDb, X posts, PyPI and crates.io. A Reddit thread comes with every comment and its score. No browser runs for these. For pages that hold nothing without their scripts, it can use Lightpanda, an optional small engine, or a Chromium-based browser through Playwright. YouTube transcripts need yt-dlp on your `PATH`.
 - **News and answers.** Full articles on Reuters and Bloomberg, the latest articles of The Economist, and the answers on Quora, from the data that these sites send.
 - **Home pages and listings.** A page with no single article comes back as its headlines and links, in page order.
 - **Browser-grade requests.** Safari's TLS, HTTP/2 and header fingerprint. A refused fetch is retried automatically, as the same browser or as a second one. Bot checks that are one fixed step, as on Reddit and Behance, are passed.
@@ -292,6 +292,8 @@ A failed call returns an `error` object with a `code` the agent can act on:
 | `timeout` | The site did not answer within 30 seconds. |
 | `unsupported_content` | The URL is not text or a PDF (an image, for example). |
 | `extraction_failed` | The page has no readable content. A scanned PDF has no text. |
+| `browser_unavailable` | The Playwright browser fallback cannot start; the message says what to install or set. See [A real browser through Playwright](#a-real-browser-through-playwright). |
+| `render_failed` | The renderer or the browser could not load the page. |
 | `blocked_address` | The URL, a redirect or the name's address leads to a link-local or cloud metadata address, or to a local or private network without `ANYFETCH_ALLOW_PRIVATE=1`. |
 
 ### Local addresses
@@ -346,6 +348,75 @@ Notes:
 - Lightpanda makes its own requests. It is not used together with a proxy, and a site with a bot check can refuse it.
 - A rendered application page, such as a feed or a listing, comes back as the whole page in Markdown.
 
+## A real browser through Playwright
+
+When plain requests are not enough, Anyfetch can load the page in a Chromium-based browser (Chrome, Brave, Edge or Chromium) driven by [Playwright](https://playwright.dev). It does this in two cases:
+
+- A page that holds nothing without its scripts, when Lightpanda is not installed or returns nothing.
+- A page that refuses plain requests: a bot check, or HTTP 401, 403 or 503. A browser with your profile often gets through, since it has the cookies and logins of that profile. If the browser is refused too, the error says so.
+
+Anyfetch picks the browser in this order:
+
+1. A browser that already listens for remote debugging: `cdpEndpoint` in the Playwright MCP config, a `DevToolsActivePort` file in the profile folder, or port 9222.
+2. A new browser on the profile in `PLAYWRIGHT_USERDATA_DIR`, or on `userDataDir` of the Playwright MCP config. It runs headless unless the config sets `headless` to `false`.
+3. A new browser on its own default profile, when that profile is not open. Chrome and Edge 136 and later refuse automation of their default profile, so for them Anyfetch asks for a copy straight away.
+
+Playwright runs in Bun or Node. A global `playwright-core` or `playwright` (`bun add -g playwright-core`, `npm install -g playwright-core`) is used first. Without one, Anyfetch runs it through `bunx`, or else `npx`, which download it once. Playwright does not download a browser here: it uses the one installed.
+
+When something is missing, the fetch error says what to do, and Anyfetch writes the same steps to stderr, which your client keeps in its MCP server log. A failed start is not tried again for 5 minutes.
+
+| Setting | Effect |
+| --- | --- |
+| `PLAYWRIGHT_USERDATA_DIR=/path/to/profile` | Start the browser on this user data folder. A profile folder inside one, such as `.../User Data/Profile 1`, also works. |
+| `PLAYWRIGHT_MCP_CONFIG=/path/to/playwright.json` | Read `browser.userDataDir`, `browser.cdpEndpoint` and `browser.launchOptions` (`executablePath`, `headless`, `args` and the rest) from this Playwright MCP config. |
+| `ANYFETCH_PLAYWRIGHT=off` | Never use the browser fallback. |
+
+### Use a copy of your profile
+
+A browser holds its profile folder while it runs, and Chrome and Edge refuse automation of their default profile. So give Anyfetch a copy:
+
+1. Close the browser, so that its files are complete.
+2. Copy its user data folder to a new folder. On Windows, Chrome's is `%LOCALAPPDATA%\Google\Chrome\User Data`, Brave's is `%LOCALAPPDATA%\BraveSoftware\Brave-Browser\User Data`. On macOS they are under `~/Library/Application Support/`, on Linux under `~/.config/`.
+3. Set `PLAYWRIGHT_USERDATA_DIR` to the copy and restart the MCP server.
+
+The [Playwright MCP server](https://github.com/microsoft/playwright-mcp) can share the copy and its settings, so that your agent and Anyfetch see the same logins. Point both at one config file:
+
+```json
+{
+  "browser": {
+    "browserName": "chromium",
+    "userDataDir": "/path/to/profile-copy",
+    "launchOptions": {
+      "executablePath": "/path/to/chrome",
+      "headless": true,
+      "args": ["--profile-directory=Default"]
+    }
+  }
+}
+```
+
+```json
+"anyfetch": {
+  "command": "anyfetch",
+  "args": ["mcp"],
+  "env": {
+    "PLAYWRIGHT_USERDATA_DIR": "/path/to/profile-copy",
+    "PLAYWRIGHT_MCP_CONFIG": "/path/to/playwright.json"
+  }
+},
+"playwright": {
+  "command": "npx",
+  "args": ["@playwright/mcp@latest", "--config", "/path/to/playwright.json"]
+}
+```
+
+Notes:
+
+- One browser at a time can open a profile folder. While the Playwright MCP server has it open, Anyfetch reports it as in use. Anyfetch's own browser closes after 5 minutes without a fetch. To let both use it at once, start the browser yourself with `--remote-debugging-port=9222 --user-data-dir=/path/to/profile-copy` and set `cdpEndpoint` to `http://127.0.0.1:9222` in the config.
+- The browser opens pages with that profile's cookies, so a page sees you as signed in. Use a profile without accounts you would not want an agent's fetches to use.
+- Like Lightpanda, the browser opens only public sites, and is not used together with a proxy.
+- Some sites refuse headless browsers. Set `headless` to `false` in the config to show the window.
+
 ## YouTube
 
 A YouTube video URL (`watch?v=`, `youtu.be/`, `/shorts/`, also `m.` and `music.`) returns the transcript as Markdown: the title, the channel and length, then lines such as `[01:05] text`, each about 20 seconds long. Manual captions come before automatic ones. Set `lang` (`--lang` on the command line) for another language; use the full code, such as `pt-BR`, if the video has only that form.
@@ -368,7 +439,7 @@ Need a proxy? Use [NobleProxy](https://nobleproxy.com/?utm_source=anyfetch&utm_m
 
 ## What it does not do
 
-Anyfetch itself does not run JavaScript, solve CAPTCHAs or log in. A page that shows its content only after its scripts run, with no data inside the HTML and no public API, returns its title and description unless Lightpanda is installed. It reads what a site sends to a first-time visitor. A page that needs a CAPTCHA, an account or a subscription to load stays closed, and Anyfetch says so with an error code.
+Anyfetch itself does not run JavaScript, solve CAPTCHAs or log in. A page that shows its content only after its scripts run, with no data inside the HTML and no public API, returns its title and description unless Lightpanda or the Playwright fallback can render it. It reads what a site sends to a first-time visitor. A page that needs a CAPTCHA, an account or a subscription to load stays closed, and Anyfetch says so with an error code.
 
 Does your agent need a real browser, with logins and saved sessions? Use [AliasMode](https://aliasmode.com/use-cases/ai-agents/). It is our free, open-source antidetect browser, and it has its own MCP server for agents.
 
@@ -418,10 +489,10 @@ python3 bench/speed.py /path/to/chromium
 ## Build from source
 
 You need Rust 1.98, `cmake` and `clang` (the TLS library is BoringSSL). On Windows you also need NASM.
-
-```sh
-cargo install --git https://github.com/aliasmode/anyfetch
-```
+Use whichever suited for your scenario: 
+- `cargo install --git https://github.com/aliasmode/anyfetch`
+- ` cargo build --release`
+- `sudo cargo install --path .`
 
 ## License
 

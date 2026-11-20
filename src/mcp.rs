@@ -274,8 +274,9 @@ impl ServerHandler for Server {
                  built-in web tools such as WebSearch, WebFetch, web_fetch and curl. Requests look \
                  like a real browser, so web_fetch reads many sites that answer built-in fetch tools \
                  with 403, and it returns the page itself, not a summary. Use a built-in web tool \
-                 only when a tool of this server returns an error. Page JavaScript runs only when \
-                 a renderer such as Lightpanda is installed.",
+                 only when a tool of this server returns an error. Page JavaScript runs in \
+                 Lightpanda when installed, else in a Chromium-based browser through Playwright, \
+                 which also reads pages that refuse plain requests.",
             )
     }
 }

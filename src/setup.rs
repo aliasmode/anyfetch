@@ -93,7 +93,7 @@ pub async fn setup() -> Vec<String> {
 }
 
 /// The file of `program` on the PATH.
-fn find(program: &str) -> Option<PathBuf> {
+pub(crate) fn find(program: &str) -> Option<PathBuf> {
     let endings: &[&str] = if cfg!(windows) {
         &[".exe", ".cmd", ".bat"]
     } else {

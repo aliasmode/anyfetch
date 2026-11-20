@@ -10,6 +10,7 @@ pub mod jq;
 pub mod mcp;
 pub mod out;
 mod pdf;
+pub mod playwright;
 pub mod render;
 pub mod search;
 pub mod setup;
@@ -34,7 +35,7 @@ pub(crate) fn hex(bytes: &[u8]) -> String {
         })
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 pub struct ToolError {
     pub code: &'static str,
     pub message: String,
