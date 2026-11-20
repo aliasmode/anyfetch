@@ -128,7 +128,7 @@ dependencies = [
 
 [[package]]
 name = "anyfetch"
-version = "0.8.4"
+version = "0.8.4-dzmba.15"
 dependencies = [
  "clap",
  "dom_query",

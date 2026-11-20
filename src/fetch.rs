@@ -436,16 +436,16 @@ async fn download(url: &str, options: Options<'_>) -> Result<FetchResponse, Tool
                     Render::Auto => shell,
                 };
             if wanted && can_render {
-                let allowed = transport::direct() && transport::resolves_public(&final_url).await;
+                let allowed = transport::direct() && transport::may_open(address, &final_url).await;
                 if !allowed && forced {
                     return Err(ToolError::new(
                         "blocked_address",
-                        "render is true, but the page cannot be rendered: its address is not public, or requests go through a proxy",
+                        "render is true, but the page cannot be rendered: its address is not public and no setting allows it, or requests go through a proxy",
                     ));
                 }
                 let rendered = match allowed {
                     false => None,
-                    true => match run_scripts(options, &final_url).await {
+                    true => match run_scripts(options, address, &final_url).await {
                         Ok(html) => html,
                         Err(error) if forced => return Err(error),
                         Err(_) => None,
@@ -505,8 +505,13 @@ async fn download(url: &str, options: Options<'_>) -> Result<FetchResponse, Tool
     })
 }
 
-/// The page after its scripts ran: in Lightpanda, then in a Chromium-based browser.
-async fn run_scripts(options: Options<'_>, url: &str) -> Result<Option<String>, ToolError> {
+/// The page after its scripts ran: in Lightpanda, then in a Chromium-based browser. `start` is
+/// the address the fetch began at, which sets where the browser may end up.
+async fn run_scripts(
+    options: Options<'_>,
+    start: &str,
+    url: &str,
+) -> Result<Option<String>, ToolError> {
     if let Some(renderer) = options.renderer
         && let Some(html) = render::render(renderer, url).await
     {
@@ -517,7 +522,15 @@ async fn run_scripts(options: Options<'_>, url: &str) -> Result<Option<String>, 
         return Ok(None);
     }
 
-    chromium::render(url).await.map(|page| Some(page.html))
+    browse(start, url).await.map(|page| Some(page.html))
+}
+
+/// Loads `url` in the browser, and discards a page that it ended on off the public web when a
+/// redirect could not have led there.
+async fn browse(start: &str, url: &str) -> Result<chromium::Rendered, ToolError> {
+    let page = chromium::render(url).await?;
+    transport::check_landing(start, &page.url).await?;
+    Ok(page)
 }
 
 /// A refusal that a real browser may not get: a bot check, or 401, 403 or 503 to plain requests
@@ -530,7 +543,7 @@ fn refused(error: &ToolError) -> bool {
 /// Reads a page that refused plain requests in the browser. The first error stays when the
 /// browser cannot help.
 async fn in_browser(url: &str, error: ToolError) -> Result<transport::Body, ToolError> {
-    if !(transport::direct() && transport::resolves_public(url).await) {
+    if !(transport::direct() && transport::may_open(url, url).await) {
         return Err(error);
     }
 
@@ -541,7 +554,8 @@ async fn in_browser(url: &str, error: ToolError) -> Result<transport::Body, Tool
         ),
         ..error.clone()
     };
-    match chromium::render(url).await {
+    match browse(url, url).await {
+        Err(blocked) if blocked.code == "blocked_address" => Err(blocked),
         Ok(page) if page.status >= 400 => Err(failed(format!("HTTP {}", page.status))),
         Ok(page) => Ok(transport::Body {
             url: page.url,

@@ -54,7 +54,7 @@ pub fn enabled() -> bool {
 }
 
 /// Closes a browser that anyfetch started, or leaves one it attached to. Call before the runtime
-/// ends: a started browser outlives anyfetch otherwise.
+/// ends: a started browser outlives anyfetch otherwise, until a later run adopts it.
 pub async fn shutdown() {
     let state = std::mem::replace(&mut *STATE.lock().await, State::Closed);
     if let State::Running(browser) = state {
@@ -181,9 +181,15 @@ struct Browser {
     /// A browser that anyfetch started: it is closed with anyfetch. On Windows this is only the
     /// launcher, which exits once the browser runs on its own.
     child: StdMutex<Option<Child>>,
+    /// Started by anyfetch, now or by an earlier run that left it (see [`Marker`]): closed when
+    /// idle and with anyfetch. Any other browser is only disconnected.
     launched: bool,
     /// The browser process of a started browser, to end it when it does not close.
     pid: Option<u32>,
+    /// When that process started, so that a reused process number is never ended.
+    created: Option<u64>,
+    /// The marker of a started browser, removed once the browser is gone.
+    marker: Option<PathBuf>,
     connection: StdMutex<Option<JoinHandle<()>>>,
     pages: AtomicUsize,
     used: StdMutex<Instant>,
@@ -492,12 +498,16 @@ async fn close(browser: Arc<Browser>) {
         // A connection that failed on its own, or a browser that stays, leaves only the process.
         if (ended.is_err() || matches!(asked, Ok(Err(_))))
             && let Some(pid) = browser.pid
+            && same_process(pid, browser.created)
         {
             terminate(pid);
         }
         let child = browser.child.lock().expect("child lock").take();
         if let Some(child) = child {
             reap(child).await;
+        }
+        if let Some(marker) = &browser.marker {
+            gone(marker, browser.pid).await;
         }
         if ended.is_ok() {
             return;
@@ -508,7 +518,20 @@ async fn close(browser: Arc<Browser>) {
     let _ = tokio::time::timeout(Duration::from_secs(2), connection).await;
 }
 
-/// Ends the browser process. Only Windows needs it: elsewhere the child is the browser itself.
+/// Removes the marker once the browser process has exited, waiting for it a little.
+async fn gone(marker: &Path, pid: Option<u32>) {
+    for _ in 0..20 {
+        if !pid.is_some_and(alive) {
+            let _ = std::fs::remove_file(marker);
+            return;
+        }
+
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
+/// Ends the browser process: a started browser that does not close, or one adopted from an
+/// earlier run, which is no child of this one.
 #[cfg(windows)]
 fn terminate(pid: u32) {
     use windows_sys::Win32::{
@@ -526,7 +549,212 @@ fn terminate(pid: u32) {
 }
 
 #[cfg(not(windows))]
-fn terminate(_pid: u32) {}
+fn terminate(pid: u32) {
+    let Ok(pid) = libc::pid_t::try_from(pid) else {
+        return;
+    };
+    if pid > 0 {
+        // SAFETY: sends a signal to one process; one that already exited fails with ESRCH.
+        unsafe { libc::kill(pid, libc::SIGKILL) };
+    }
+}
+
+/// Whether a process runs. One that cannot be checked counts as running.
+#[cfg(windows)]
+fn alive(pid: u32) -> bool {
+    use windows_sys::Win32::{
+        Foundation::{CloseHandle, ERROR_ACCESS_DENIED, GetLastError, STILL_ACTIVE},
+        System::Threading::{GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION},
+    };
+    // SAFETY: the handle is checked and closed; the exit code is written to a local.
+    unsafe {
+        let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+        if process.is_null() {
+            return GetLastError() == ERROR_ACCESS_DENIED;
+        }
+        let mut code = 0;
+        let read = GetExitCodeProcess(process, &mut code) != 0;
+        CloseHandle(process);
+        !read || code == STILL_ACTIVE as u32
+    }
+}
+
+/// Whether a process runs. EPERM means it runs as another user.
+#[cfg(not(windows))]
+fn alive(pid: u32) -> bool {
+    let Ok(pid) = libc::pid_t::try_from(pid) else {
+        return true;
+    };
+    if pid <= 0 {
+        return true;
+    }
+    // SAFETY: signal 0 only checks that the process exists.
+    let found = unsafe { libc::kill(pid, 0) } == 0;
+    found || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+}
+
+/// When a process started, in milliseconds since 1970, where the system says.
+#[cfg(windows)]
+fn started_at(pid: u32) -> Option<u64> {
+    use windows_sys::Win32::{
+        Foundation::{CloseHandle, FILETIME},
+        System::Threading::{GetProcessTimes, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION},
+    };
+    let zero = || FILETIME {
+        dwLowDateTime: 0,
+        dwHighDateTime: 0,
+    };
+    let (mut created, mut exited, mut kernel, mut user) = (zero(), zero(), zero(), zero());
+    // SAFETY: the handle is checked and closed; the times are written to locals.
+    let read = unsafe {
+        let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+        if process.is_null() {
+            return None;
+        }
+        let read = GetProcessTimes(process, &mut created, &mut exited, &mut kernel, &mut user);
+        CloseHandle(process);
+        read != 0
+    };
+    // 100-nanosecond steps since 1601.
+    let ticks = (u64::from(created.dwHighDateTime) << 32) | u64::from(created.dwLowDateTime);
+    (read && ticks > 0).then(|| (ticks / 10_000).saturating_sub(11_644_473_600_000))
+}
+
+#[cfg(target_os = "linux")]
+fn started_at(pid: u32) -> Option<u64> {
+    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    // The name in parentheses may hold spaces; the start time is field 22, in clock ticks.
+    let fields: Vec<&str> = stat.rsplit_once(')')?.1.split_whitespace().collect();
+    let ticks: u64 = fields.get(19)?.parse().ok()?;
+    let boot = std::fs::read_to_string("/proc/stat").ok()?;
+    let boot: u64 = boot
+        .lines()
+        .find_map(|line| line.strip_prefix("btime "))?
+        .trim()
+        .parse()
+        .ok()?;
+    // SAFETY: sysconf only reads a system setting.
+    let per_second = u64::try_from(unsafe { libc::sysconf(libc::_SC_CLK_TCK) }).ok()?;
+    (per_second > 0).then(|| boot * 1000 + ticks * 1000 / per_second)
+}
+
+#[cfg(target_os = "macos")]
+fn started_at(pid: u32) -> Option<u64> {
+    // SAFETY: `proc_bsdinfo` is plain integers and byte arrays, valid as zeros.
+    let mut info: libc::proc_bsdinfo = unsafe { std::mem::zeroed() };
+    let size = std::mem::size_of::<libc::proc_bsdinfo>() as libc::c_int;
+    // SAFETY: the buffer is a `proc_bsdinfo` of the size given.
+    let read = unsafe {
+        libc::proc_pidinfo(
+            pid.try_into().ok()?,
+            libc::PROC_PIDTBSDINFO,
+            0,
+            (&raw mut info).cast(),
+            size,
+        )
+    };
+    (read == size).then(|| info.pbi_start_tvsec * 1000 + info.pbi_start_tvusec / 1000)
+}
+
+#[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
+fn started_at(_pid: u32) -> Option<u64> {
+    None
+}
+
+const MARKER: &str = "anyfetch-browser.json";
+
+/// Left by anyfetch in the user data folder of a browser it started, so that a later run that
+/// finds the browser still open, after this one was killed, knows to close it. Without the
+/// browser's process and port, the start did not finish, and a browser that started then counts.
+#[derive(Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+struct Marker {
+    /// Milliseconds since 1970 when anyfetch ran the browser.
+    started: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pid: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    port: Option<u16>,
+    /// The anyfetch process that uses the browser, and when it started: while it runs, another
+    /// anyfetch on the same profile only attaches.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    owner: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    owner_started: Option<u64>,
+}
+
+/// How long after the browser was run a browser that started counts as that one.
+const PENDING_MS: u64 = START.as_millis() as u64 + 60_000;
+
+impl Marker {
+    /// A marker owned by this process.
+    fn new(started: u64, pid: Option<u32>, port: Option<u16>) -> Self {
+        let owner = std::process::id();
+        Self {
+            started,
+            pid,
+            port,
+            owner: Some(owner),
+            owner_started: started_at(owner),
+        }
+    }
+
+    /// Whether the anyfetch that wrote the marker is gone, or is this one.
+    fn orphaned(&self) -> bool {
+        self.owner.is_none_or(|owner| {
+            owner == std::process::id() || !same_process(owner, self.owner_started)
+        })
+    }
+
+    /// Whether the browser with process `pid`, debugging port `port` and start time `created`
+    /// is the one this marker names.
+    fn names(&self, pid: u32, port: u16, created: Option<u64>) -> bool {
+        match (self.pid, self.port) {
+            (Some(own), Some(own_port)) => own == pid && own_port == port,
+            _ => created.is_some_and(|created| {
+                created + 1000 >= self.started && created <= self.started + PENDING_MS
+            }),
+        }
+    }
+
+    /// A marker whose browser is gone. One without a process names a browser by its start time,
+    /// which stays the same, so it stays until the next start replaces it.
+    fn stale(&self) -> bool {
+        self.pid.is_some_and(|pid| !alive(pid))
+    }
+}
+
+/// Whether `pid` still is the process that started at `started`, when that is known: a process
+/// number can be reused once its process exited.
+fn same_process(pid: u32, started: Option<u64>) -> bool {
+    alive(pid)
+        && match (started, started_at(pid)) {
+            (Some(then), Some(now)) => then.abs_diff(now) < 2000,
+            _ => true,
+        }
+}
+
+fn now_ms() -> u64 {
+    let since = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH);
+    since.map_or(0, |since| since.as_millis() as u64)
+}
+
+fn write_marker(data: &Path, marker: &Marker) {
+    let text = serde_json::to_string(marker).expect("a marker serializes");
+    let _ = std::fs::write(data.join(MARKER), text);
+}
+
+/// The marker in `data`, after removing one that is stale or unreadable.
+fn read_marker(data: &Path) -> Option<Marker> {
+    let path = data.join(MARKER);
+    let text = std::fs::read_to_string(&path).ok()?;
+    match serde_json::from_str::<Marker>(&text) {
+        Ok(marker) if !marker.stale() => Some(marker),
+        _ => {
+            let _ = std::fs::remove_file(&path);
+            None
+        }
+    }
+}
 
 /// Waits for a started browser to exit, and kills it if it does not.
 async fn reap(mut child: Child) {
@@ -544,6 +772,8 @@ async fn reap(mut child: Child) {
 enum Target {
     /// A browser that already listens for remote debugging, by its HTTP or WebSocket endpoint.
     Attach(String),
+    /// A browser found through `DevToolsActivePort` in its user data folder, on this port.
+    Found(String, PathBuf, u16),
     Launch(Launch),
 }
 
@@ -571,13 +801,33 @@ struct Chromium {
 async fn start() -> Result<Browser, ToolError> {
     let target = target().await?;
     let started = match &target {
-        Target::Attach(endpoint) => match debugger(endpoint).await {
-            Some(socket) => connect(&socket, None).await,
+        Target::Attach(endpoint) | Target::Found(endpoint, ..) => match debugger(endpoint).await {
+            // Only a browser found in a profile folder can be one that anyfetch started.
+            Some(socket) => connect(&socket, None, matches!(target, Target::Found(..))).await,
             None => Err("it does not answer".to_owned()),
         },
         Target::Launch(launch) => launch_browser(launch).await,
     };
-    started.map_err(|reason| start_failed(&target, &reason))
+    let mut browser = started.map_err(|reason| start_failed(&target, &reason))?;
+    if let Target::Found(_, data, port) = &target {
+        adopt(&mut browser, data, *port);
+    }
+    Ok(browser)
+}
+
+/// Takes over a browser that an earlier run of anyfetch started and left open, as its marker
+/// says, so that it closes like one started now. One that a running anyfetch uses stays its own.
+fn adopt(browser: &mut Browser, data: &Path, port: u16) {
+    let (Some(marker), Some(pid)) = (read_marker(data), browser.pid) else {
+        return;
+    };
+
+    if marker.orphaned() && marker.names(pid, port, browser.created) {
+        browser.launched = true;
+        browser.marker = Some(data.join(MARKER));
+        // Its own process and port, and this run as the owner, for when this run is killed too.
+        write_marker(data, &Marker::new(marker.started, Some(pid), Some(port)));
+    }
 }
 
 /// Starts the browser with a debugging port of its choosing, which it writes to
@@ -587,6 +837,10 @@ async fn launch_browser(launch: &Launch) -> Result<Browser, String> {
     let port_file = launch.data.join("DevToolsActivePort");
     // Left by an earlier run; the profile is not in use, so the file is stale.
     let _ = std::fs::remove_file(&port_file);
+    // Before the browser runs: a start that is given up may leave a browser that opens its port
+    // later, and a later run adopts it.
+    let started = now_ms();
+    write_marker(&launch.data, &Marker::new(started, None, None));
     let mut child = std::process::Command::new(&launch.program)
         .args(launch_args(launch))
         .stdin(Stdio::null())
@@ -612,7 +866,13 @@ async fn launch_browser(launch: &Launch) -> Result<Browser, String> {
 
         tokio::time::sleep(Duration::from_millis(100)).await;
     };
-    connect(&format!("ws://127.0.0.1:{port}{path}"), Some(child)).await
+    let url = format!("ws://127.0.0.1:{port}{path}");
+    let mut browser = connect(&url, Some(child), true).await?;
+    browser.marker = Some(launch.data.join(MARKER));
+    if let Some(pid) = browser.pid {
+        write_marker(&launch.data, &Marker::new(started, Some(pid), Some(port)));
+    }
+    Ok(browser)
 }
 
 fn launch_args(launch: &Launch) -> Vec<String> {
@@ -652,7 +912,9 @@ fn active_port(text: &str) -> Option<(u16, String)> {
     (port != 0 && path.starts_with("/devtools/browser/")).then(|| (port, path.to_owned()))
 }
 
-async fn connect(url: &str, child: Option<Child>) -> Result<Browser, String> {
+/// With `identify`, learns the browser's process, to close a started browser that stays and to
+/// tell whether an earlier run started a browser found in a profile folder.
+async fn connect(url: &str, child: Option<Child>, identify: bool) -> Result<Browser, String> {
     let open = async {
         CLIENT
             .websocket(url)
@@ -686,14 +948,17 @@ async fn connect(url: &str, child: Option<Child>) -> Result<Browser, String> {
         launched: child.is_some(),
         child: StdMutex::new(child),
         pid: None,
+        created: None,
+        marker: None,
         connection: StdMutex::new(Some(connection)),
         pages: AtomicUsize::new(0),
         used: StdMutex::new(Instant::now()),
     };
-    if browser.launched {
+    if identify {
         let ask = browser.call("SystemInfo.getProcessInfo", json!({}), None);
         if let Ok(Ok(info)) = tokio::time::timeout(Duration::from_secs(5), ask).await {
             browser.pid = browser_pid(&info);
+            browser.created = browser.pid.and_then(started_at);
         }
     }
     Ok(browser)
@@ -771,7 +1036,7 @@ fn start_failed(target: &Target, reason: &str) -> ToolError {
             launch.name,
             launch.data.display()
         )),
-        Target::Attach(url) => unavailable(format!(
+        Target::Attach(url) | Target::Found(url, ..) => unavailable(format!(
             "Could not attach to the browser at {url}: {reason}"
         )),
     }
@@ -840,8 +1105,8 @@ async fn target() -> Result<Target, ToolError> {
     let folders = copy.iter().map(|(data, _)| data.clone());
     let folders = folders.chain(installed.iter().filter_map(|browser| browser.data.clone()));
     for folder in folders {
-        if let Some(url) = debug_url(&folder).await {
-            return Ok(Target::Attach(url));
+        if let Some((url, port)) = debug_url(&folder).await {
+            return Ok(Target::Found(url, folder, port));
         }
     }
     let local = format!("http://127.0.0.1:{DEBUG_PORT}");
@@ -923,11 +1188,11 @@ fn split_profile(path: &Path) -> (PathBuf, Option<String>) {
 }
 
 /// The browser writes its debugging port to `DevToolsActivePort` and leaves it after a crash.
-async fn debug_url(data: &Path) -> Option<String> {
+async fn debug_url(data: &Path) -> Option<(String, u16)> {
     let text = std::fs::read_to_string(data.join("DevToolsActivePort")).ok()?;
     let (port, _) = active_port(&text)?;
     let url = format!("http://127.0.0.1:{port}");
-    debugger(&url).await.map(|_| url)
+    debugger(&url).await.map(|_| (url, port))
 }
 
 /// A running browser holds `lockfile` open without sharing it.
@@ -937,10 +1202,51 @@ fn in_use(data: &Path) -> bool {
     lock.exists() && std::fs::OpenOptions::new().write(true).open(&lock).is_err()
 }
 
-/// A running browser keeps the `SingletonLock` link; a crash can leave it behind.
+/// A running browser keeps the `SingletonLock` link to `<host>-<pid>`. A crash leaves it behind,
+/// and the browser then removes it itself, so only a live process, or another machine's, counts.
 #[cfg(not(windows))]
 fn in_use(data: &Path) -> bool {
-    data.join("SingletonLock").symlink_metadata().is_ok()
+    let lock = data.join("SingletonLock");
+    if lock.symlink_metadata().is_err() {
+        return false;
+    }
+
+    std::fs::read_link(&lock).map_or(true, |target| {
+        lock_held(&target.to_string_lossy(), &hostname())
+    })
+}
+
+/// Whether the owner `<host>-<pid>` of a lock is a live process on `host`. An owner that cannot
+/// be read counts as live, so a profile is never opened twice.
+#[cfg(not(windows))]
+fn lock_held(owner: &str, host: &str) -> bool {
+    let Some((owner_host, pid)) = owner.rsplit_once('-') else {
+        return true;
+    };
+    let Ok(pid) = pid.parse::<i64>() else {
+        return true;
+    };
+    if owner_host != host || pid <= 0 {
+        return true;
+    }
+
+    u32::try_from(pid).map_or(true, alive)
+}
+
+#[cfg(not(windows))]
+fn hostname() -> String {
+    let mut name = [0u8; 256];
+    // SAFETY: the buffer is writable for its whole length; the name ends at the first NUL.
+    let named = unsafe { libc::gethostname(name.as_mut_ptr().cast(), name.len()) } == 0;
+    let end = name
+        .iter()
+        .position(|&byte| byte == 0)
+        .unwrap_or(name.len());
+    if named {
+        String::from_utf8_lossy(&name[..end]).into_owned()
+    } else {
+        String::new()
+    }
 }
 
 /// Chromium-based browsers found on this machine, in order of preference.
@@ -1060,6 +1366,123 @@ fn failed(message: impl Into<String>) -> ToolError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(not(windows))]
+    #[test]
+    fn only_a_live_lock_owner_holds_the_profile() {
+        let host = hostname();
+        let own = format!("{host}-{}", std::process::id());
+        assert!(lock_held(&own, &host));
+        let mut child = std::process::Command::new("true").spawn().unwrap();
+        let gone = child.id();
+        child.wait().unwrap();
+        assert!(!lock_held(&format!("{host}-{gone}"), &host));
+        assert!(lock_held(&format!("other-machine-{gone}"), &host));
+        assert!(lock_held("garbage", &host));
+
+        let data = std::env::temp_dir().join(format!("anyfetch-lock-test-{}", std::process::id()));
+        std::fs::create_dir_all(&data).unwrap();
+        assert!(!in_use(&data));
+        std::os::unix::fs::symlink(format!("{host}-{gone}"), data.join("SingletonLock")).unwrap();
+        assert!(!in_use(&data));
+        std::fs::remove_file(data.join("SingletonLock")).unwrap();
+        std::os::unix::fs::symlink(&own, data.join("SingletonLock")).unwrap();
+        assert!(in_use(&data));
+        std::fs::remove_dir_all(&data).unwrap();
+    }
+
+    fn exited_pid() -> u32 {
+        let mut command = if cfg!(windows) {
+            let mut command = std::process::Command::new("cmd");
+            command.args(["/c", "exit"]);
+            command
+        } else {
+            std::process::Command::new("true")
+        };
+        let mut child = command.spawn().unwrap();
+        let pid = child.id();
+        child.wait().unwrap();
+        pid
+    }
+
+    #[test]
+    fn a_marker_names_only_its_own_browser() {
+        let marker = Marker::new(1_000_000, Some(4242), Some(53124));
+        assert!(marker.names(4242, 53124, None));
+        // Another browser on the profile, or the same process number on another port.
+        assert!(!marker.names(4243, 53124, None));
+        assert!(!marker.names(4242, 9222, Some(1_000_500)));
+        // A start that did not finish names the browser that started right after it.
+        let pending = Marker::new(1_000_000, None, None);
+        assert!(pending.names(7, 9222, Some(1_000_500)));
+        assert!(pending.names(7, 9222, Some(999_500)));
+        assert!(!pending.names(7, 9222, Some(900_000)));
+        assert!(!pending.names(7, 9222, Some(1_000_000 + PENDING_MS + 1)));
+        assert!(!pending.names(7, 9222, None));
+    }
+
+    #[test]
+    fn a_marker_of_a_gone_browser_is_stale_and_removed() {
+        let data =
+            std::env::temp_dir().join(format!("anyfetch-marker-test-{}", std::process::id()));
+        std::fs::create_dir_all(&data).unwrap();
+        assert_eq!(read_marker(&data), None);
+        let live = Marker::new(now_ms(), Some(std::process::id()), Some(53124));
+        write_marker(&data, &live);
+        assert_eq!(read_marker(&data), Some(live));
+        let pending = Marker::new(1, None, None);
+        write_marker(&data, &pending);
+        assert_eq!(read_marker(&data), Some(pending));
+        let gone = Marker::new(now_ms(), Some(exited_pid()), Some(53124));
+        write_marker(&data, &gone);
+        assert_eq!(read_marker(&data), None);
+        assert!(!data.join(MARKER).exists());
+        std::fs::write(data.join(MARKER), "not json").unwrap();
+        assert_eq!(read_marker(&data), None);
+        assert!(!data.join(MARKER).exists());
+        std::fs::remove_dir_all(&data).unwrap();
+    }
+
+    #[test]
+    fn only_a_browser_whose_anyfetch_is_gone_is_adopted() {
+        let mut marker = Marker::new(now_ms(), Some(4242), Some(53124));
+        // Written by this run, as after a start that timed out.
+        assert!(marker.orphaned());
+        // Another anyfetch that still runs keeps its browser.
+        let mut other = if cfg!(windows) {
+            let mut command = std::process::Command::new("cmd");
+            command.args(["/c", "ping -n 30 127.0.0.1 >nul"]);
+            command
+        } else {
+            let mut command = std::process::Command::new("sleep");
+            command.arg("30");
+            command
+        };
+        let mut other = other.spawn().unwrap();
+        marker.owner = Some(other.id());
+        marker.owner_started = started_at(other.id());
+        assert!(!marker.orphaned());
+        // The same number, now another process.
+        marker.owner_started = marker.owner_started.map(|started| started - 60_000);
+        assert_eq!(marker.orphaned(), marker.owner_started.is_some());
+        other.kill().unwrap();
+        other.wait().unwrap();
+        marker.owner = Some(exited_pid());
+        assert!(marker.orphaned());
+        marker.owner = None;
+        assert!(marker.orphaned());
+    }
+
+    #[test]
+    fn tells_live_processes_and_their_start() {
+        assert!(alive(std::process::id()));
+        assert!(!alive(exited_pid()));
+        if cfg!(any(windows, target_os = "linux", target_os = "macos")) {
+            let started = started_at(std::process::id()).unwrap();
+            assert!(started <= now_ms() + 1000, "{started}");
+            assert!(started + 24 * 3600 * 1000 > now_ms(), "{started}");
+        }
+    }
 
     #[test]
     fn a_profile_path_names_its_user_data_folder() {

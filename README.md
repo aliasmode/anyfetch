@@ -36,7 +36,9 @@ Anyfetch picks the browser in this order:
 | `PLAYWRIGHT_MCP_CONFIG=/path/to/playwright.json` | Read `browser.userDataDir`, `browser.cdpEndpoint` and `browser.launchOptions` (`executablePath`, `headless`, `args`) from this file, in the Playwright MCP config format. Optional. |
 | `ANYFETCH_CHROMIUM=off` | Never use the browser fallback. |
 
-When the browser cannot start, the fetch returns `browser_unavailable` and the message lists the steps to fix it. Anyfetch writes the same text to stderr, which MCP clients keep in their server log. A failed start is not tried again for 5 minutes. The browser Anyfetch started closes after 5 minutes without a fetch, and when Anyfetch exits. If the client kills Anyfetch instead, the browser keeps running; close it yourself.
+When the browser cannot start, the fetch returns `browser_unavailable` and the message lists the steps to fix it. Anyfetch writes the same text to stderr, which MCP clients keep in their server log. A failed start is not tried again for 5 minutes. The browser Anyfetch started closes after 5 minutes without a fetch, and when Anyfetch exits.
+
+Anyfetch writes `anyfetch-browser.json` into the user data folder of a browser it starts, with the browser's process ID and debugging port. If the client kills Anyfetch, the browser keeps running until the next Anyfetch finds it through `DevToolsActivePort`. When the marker matches that browser and the Anyfetch that wrote it is gone, Anyfetch adopts it and closes it like its own: after 5 minutes idle and on exit. A browser that another running Anyfetch uses is only attached to. The marker of a start that timed out names the browser by its start time instead, so a browser that opened its port late is adopted too. A browser without a matching marker, such as one you started with `--remote-debugging-port=9222`, is never closed. A marker whose process is gone is removed.
 
 ### Use a copy of your profile
 
@@ -61,7 +63,9 @@ On macOS they are under `~/Library/Application Support/`, on Linux under `~/.con
       "command": "anyfetch",
       "args": ["mcp"],
       "env": {
-        "PLAYWRIGHT_USERDATA_DIR": "/path/to/profile-copy"
+        "ANYFETCH_ALLOW_LOCALHOST": "1",
+        "PLAYWRIGHT_USERDATA_DIR": "/path/to/profile-copy/Profile 1",
+        "PLAYWRIGHT_MCP_CONFIG": "/path/to/profile-copy/playwright.json"
       }
     }
   }
@@ -90,7 +94,10 @@ Notes:
 - One browser at a time can open a profile folder. While another browser has it open, Anyfetch reports it as in use.
 - To share a running browser, start it with `--remote-debugging-port=9222 --user-data-dir=/path/to/profile-copy`. Anyfetch attaches to port 9222, or to `cdpEndpoint` in the config file.
 - The browser opens pages with that profile's cookies, so a page sees you as signed in. Use a profile without accounts you would not want an agent's fetches to use.
-- Like Lightpanda, the browser opens only public sites, and is not used together with a proxy.
+- Like Lightpanda, the browser opens only public sites unless a setting in [Local addresses](#local-addresses) allows the page, and is not used together with a proxy.
+- If the browser ends on a page on this machine or a private network, and the fetch did not start there, Anyfetch discards it and returns `blocked_address`. Only the dangerous setting below allows it.
+- Lightpanda reports no final address, so its redirects are not checked.
+- Only the page address is checked. The page's scripts can still send requests to other hosts, also on your network. Chrome's own local network protections apply to them; Lightpanda has none.
 - Some sites refuse headless browsers. Set `headless` to `false` in the config to show the window.
 
 ## Use it from the command line
@@ -100,7 +107,7 @@ On top of the [upstream commands](README-OG.md#use-it-from-the-command-line):
 ```sh
 anyfetch fetch https://news.ycombinator.com/ --content html --selector ".titleline > a"
 anyfetch fetch https://api.github.com/repos/rust-lang/rust --selector "{name, stars: .stargazers_count}"
-anyfetch fetch "https://www.youtube.com/watch?v=<id>" --lang es
+anyfetch fetch "https://www.youtube.com/watch?v=<id>" --lang en # Youtube video transcript
 anyfetch fetch https://docs.python.org/3.15/whatsnew/3.15.html --out true --preview 40:20
 ```
 
@@ -149,7 +156,7 @@ Added to the [upstream inputs](README-OG.md#web_search):
 | `render` | Effect |
 | --- | --- |
 | `"auto"` (default) | Run the page's scripts only when the page is just scripts and a renderer is available. Pages that already work are not rendered, so they stay fast. |
-| `"true"` | Render every HTML page, for every `format`. The error is `renderer_missing` if no renderer is available, `blocked_address` if the page is not public or requests go through a proxy, and `render_failed` if the renderer returns no page. |
+| `"true"` | Render every HTML page, for every `format`. The error is `renderer_missing` if no renderer is available, `blocked_address` if the page is not public and no [setting](#local-addresses) allows it, or requests go through a proxy, and `render_failed` if the renderer returns no page. |
 | `"false"` | Never render. |
 
 With `"false"`, or when no renderer is available, Anyfetch also skips the article extraction on the formats other than `readable`, since it is only needed to spot a page that is just scripts.
@@ -174,11 +181,20 @@ A YouTube video URL (`watch?v=`, `youtu.be/`, `/shorts/`, also `m.` and `music.`
 
 ## Local addresses
 
-By default, `web_fetch` reads only public sites. It refuses this machine (`localhost`, `127.0.0.1`) and private networks (`10.x`, `192.168.x` and similar), also when a public name or a redirect leads there. It always refuses link-local and cloud metadata addresses, such as `169.254.169.254`. The Cloudflare browser, the JavaScript renderer and the browser fallback open only public sites.
+By default, `web_fetch` reads only public sites. It refuses this machine (`localhost`, `127.0.0.1`, `::1`) and private networks (`10.x`, `192.168.x` and similar), also when a public name or a redirect leads there. It always refuses link-local and cloud metadata addresses, such as `169.254.169.254`, whatever the settings.
 
 | Setting | Effect |
 | --- | --- |
-| `ANYFETCH_ALLOW_PRIVATE=1` | Also allows this machine and private networks. Link-local and cloud metadata addresses stay blocked. A SearXNG instance may be local or private without it. |
+| `ANYFETCH_ALLOW_LOCALHOST=1` | Allows URLs on this machine that you or the agent give, such as a dev server at `http://127.0.0.1:3000`. Private networks stay refused. Use this one to debug a local project. |
+| `ANYFETCH_ALLOW_PRIVATE=1` | Allows URLs on this machine and on private networks that you or the agent give. |
+| `ANYFETCH_DANGEROUSLY_ALLOW_PUBLIC_TO_PRIVATE_REDIRECTS=1` | Dangerous. Also lets any public website redirect Anyfetch to this machine or your network, so a page can make Anyfetch read your router, NAS or local services and hand the result to the agent. Includes `ANYFETCH_ALLOW_PRIVATE=1`. Leave it off. |
+
+How the rules apply:
+
+- Each step of a request is judged by the page that sends it. A redirect, or the next request of a bot check, may lead to this machine or a private network only from a page there, and only if a setting allows the target. A public page that redirects there gets `blocked_address`, unless the dangerous setting is on.
+- A public name that resolves to an address on this machine or a private network counts as that address. A name without a dot, or under `.local` or `.internal`, counts as private for the renderer and the browser.
+- The JavaScript renderer and the browser fallback open a page on this machine or a private network only when a setting allows it and the fetch started there, or with the dangerous setting. They make their own requests, so they are judged by where the fetch started, not by each step; see the notes in [Browser fallback](#browser-fallback). The Cloudflare browser opens only public sites.
+- A SearXNG instance may be on this machine or your network without any setting. Its redirects follow the same rules.
 
 ## Tool schemas
 
@@ -203,7 +219,7 @@ Codes added by this fork, on top of the [upstream codes](README-OG.md#errors):
 
 | Code | Meaning |
 | --- | --- |
-| `blocked_address` | The URL, a redirect or the name's address leads to a link-local or cloud metadata address, or to a local or private network without `ANYFETCH_ALLOW_PRIVATE=1`. |
+| `blocked_address` | The URL, a redirect, the name's address or the page the browser ended on leads to a link-local or cloud metadata address, or to this machine or a private network that no [setting](#local-addresses) allows. The message names the setting that would. |
 | `browser_unavailable` | The browser fallback cannot start. The message lists the steps. See [Browser fallback](#browser-fallback). |
 | `render_failed` | The renderer or the browser could not load the page. |
 | `renderer_missing` | `render` is `"true"` and no renderer is available. |

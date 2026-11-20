@@ -5,10 +5,11 @@ use crate::{
 use encoding_rs::{Encoding, UTF_8};
 use futures_util::StreamExt;
 use std::{
+    collections::HashMap,
     error::Error,
-    net::{IpAddr, Ipv4Addr, Ipv6Addr},
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     path::Path,
-    sync::Arc,
+    sync::{Arc, Mutex as StdMutex},
     time::Duration,
 };
 use url::{Host, Url};
@@ -41,7 +42,8 @@ fn client(
     cleared: Option<(&Clearance, &str)>,
     direct: bool,
     local: bool,
-) -> Result<(Client, Arc<Jar>), ToolError> {
+) -> Result<(Client, Arc<Jar>, Arc<Scope>), ToolError> {
+    let scope = Arc::new(Scope::new(Rules::from_env(local)));
     let jar = Arc::new(Jar::default());
     for cookie in cleared.iter().flat_map(|(clearance, _)| &clearance.cookies) {
         let (name, value) = (&cookie.name, &cookie.value);
@@ -57,28 +59,38 @@ fn client(
                 .build(),
         )
         .cookie_provider(jar.clone())
-        .redirect(redirect::Policy::custom(move |attempt| {
-            match guard(&attempt.uri.to_string(), local) {
-                Ok(()) => redirect::Policy::default().redirect(attempt),
-                Err(error) => attempt.error(error),
+        .redirect(redirect::Policy::custom({
+            let scope = Arc::clone(&scope);
+            move |attempt| {
+                // The last address requested is the page that sent the redirect.
+                let from = attempt.previous.last().map(ToString::to_string);
+                match scope.hop(
+                    from.as_deref().unwrap_or_default(),
+                    &attempt.uri.to_string(),
+                ) {
+                    Ok(()) => redirect::Policy::default().redirect(attempt),
+                    Err(error) => attempt.error(error),
+                }
             }
         }))
         .timeout(TIMEOUT)
         .no_proxy();
-    // Through a proxy the proxy resolves names, so only the address checks in `guard` apply.
+    // Through a proxy the proxy resolves names, so only the address checks in `Scope` apply.
     if !direct && let (Some(proxy), _) = proxy()? {
         builder = builder.proxy(proxy);
     } else {
-        builder = builder.dns_resolver(Resolver { local });
+        builder = builder.dns_resolver(Resolver(Arc::clone(&scope)));
     }
-    Ok((builder.build()?, jar))
+    Ok((builder.build()?, jar, scope))
 }
 
-/// Where an address leads.
-#[derive(Debug, PartialEq)]
+/// Where an address leads, ordered from least to most restricted.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum Reach {
     Public,
-    /// This machine or its local network.
+    /// This machine: loopback, `localhost` names, and the unspecified address.
+    Loopback,
+    /// The local or a private network.
     Private,
     /// Link-local and cloud metadata addresses, never fetched.
     Blocked,
@@ -99,9 +111,9 @@ fn ipv4_reach(address: Ipv4Addr) -> Reach {
     // 100.100.100.200 is the Alibaba Cloud metadata service.
     if address.is_link_local() || address == Ipv4Addr::new(100, 100, 100, 200) {
         Reach::Blocked
-    } else if address.is_loopback()
-        || address.is_private()
-        || address.is_unspecified()
+    } else if address.is_loopback() || address.is_unspecified() {
+        Reach::Loopback
+    } else if address.is_private()
         // 100.64.0.0/10, carrier-grade NAT: the top two bits of the second octet are 01.
         || (first == 100 && second & 0xc0 == 0x40)
     {
@@ -119,11 +131,17 @@ fn ipv6_reach(address: Ipv6Addr) -> Reach {
     let nat64 = prefix == [0x64, 0xff9b, 0, 0, 0, 0];
     let compatible = prefix == [0; 6] && !address.is_loopback() && !address.is_unspecified();
     if nat64 || compatible {
-        return ipv4_reach(Ipv4Addr::from_bits(address.to_bits() as u32));
+        // A translator elsewhere reaches the IPv4 address, so its loopback is not this machine.
+        return match ipv4_reach(Ipv4Addr::from_bits(address.to_bits() as u32)) {
+            Reach::Loopback => Reach::Private,
+            reach => reach,
+        };
     }
     if address.is_unicast_link_local() || address == aws_metadata {
         Reach::Blocked
-    } else if address.is_loopback() || address.is_unspecified() || address.is_unique_local() {
+    } else if address.is_loopback() || address.is_unspecified() {
+        Reach::Loopback
+    } else if address.is_unique_local() {
         Reach::Private
     } else {
         Reach::Public
@@ -137,7 +155,7 @@ fn host_reach(host: &Host<&str>) -> Reach {
             if matches!(name, "metadata" | "metadata.google.internal") {
                 Reach::Blocked
             } else if name == "localhost" || name.ends_with(".localhost") {
-                Reach::Private
+                Reach::Loopback
             } else {
                 Reach::Public
             }
@@ -147,79 +165,274 @@ fn host_reach(host: &Host<&str>) -> Reach {
     }
 }
 
-/// This machine and its network are allowed only with `ANYFETCH_ALLOW_PRIVATE=1`. With `local`,
-/// they are allowed anyway.
-fn allowed(reach: Reach, local: bool) -> bool {
-    match reach {
-        Reach::Public => true,
-        Reach::Private => {
-            local || std::env::var_os("ANYFETCH_ALLOW_PRIVATE").is_some_and(|value| value == "1")
+pub(crate) const ALLOW_LOCALHOST: &str = "ANYFETCH_ALLOW_LOCALHOST";
+pub(crate) const ALLOW_PRIVATE: &str = "ANYFETCH_ALLOW_PRIVATE";
+pub(crate) const PUBLIC_TO_PRIVATE: &str = "ANYFETCH_DANGEROUSLY_ALLOW_PUBLIC_TO_PRIVATE_REDIRECTS";
+
+fn flag(name: &str) -> bool {
+    std::env::var_os(name).is_some_and(|value| value == "1")
+}
+
+/// Which addresses off the public web may be reached. Link-local and metadata addresses never are.
+/// The agent's own URLs, and pages off the public web, may lead to what the user allowed; a public
+/// site may lead off it only with `public_to_private`.
+#[derive(Clone, Copy, Debug, Default)]
+struct Rules {
+    /// This machine: `ANYFETCH_ALLOW_LOCALHOST=1`.
+    localhost: bool,
+    /// This machine and private networks: `ANYFETCH_ALLOW_PRIVATE=1`, or a server of the user's
+    /// such as their SearXNG.
+    private: bool,
+    /// A public site may send anyfetch to both. Includes `private`.
+    public_to_private: bool,
+}
+
+/// Who sends a request: the agent, or a page at a public address or one off the public web.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Origin {
+    Agent,
+    Public,
+    Private,
+}
+
+impl Rules {
+    fn from_env(local: bool) -> Self {
+        let public_to_private = flag(PUBLIC_TO_PRIVATE);
+        Self {
+            localhost: flag(ALLOW_LOCALHOST),
+            private: local || public_to_private || flag(ALLOW_PRIVATE),
+            public_to_private,
         }
-        Reach::Blocked => false,
+    }
+
+    /// Refuses a request from `origin` to `target`, which leads to `reach`.
+    fn admit(self, origin: Origin, reach: Reach, target: &str) -> Result<(), ToolError> {
+        match reach {
+            Reach::Public => Ok(()),
+            Reach::Blocked => Err(blocked(target, reach)),
+            _ if self.public_to_private => Ok(()),
+            _ if origin == Origin::Public => Err(redirected(target)),
+            Reach::Loopback if self.localhost || self.private => Ok(()),
+            Reach::Private if self.private => Ok(()),
+            _ => Err(blocked(target, reach)),
+        }
     }
 }
 
-fn blocked(target: &str) -> ToolError {
+fn blocked(target: &str, reach: Reach) -> ToolError {
+    let message = match reach {
+        Reach::Loopback => format!(
+            "{target} is on this machine. {ALLOW_LOCALHOST}=1 allows this machine, \
+             {ALLOW_PRIVATE}=1 also private networks"
+        ),
+        Reach::Private => format!(
+            "{target} is on a local or private network. {ALLOW_PRIVATE}=1 allows local and private networks"
+        ),
+        _ => format!("{target} is a link-local or cloud metadata address, which is never fetched"),
+    };
+    ToolError::new("blocked_address", message)
+}
+
+fn redirected(target: &str) -> ToolError {
     ToolError::new(
         "blocked_address",
         format!(
-            "{target} is a local, link-local or cloud metadata address. ANYFETCH_ALLOW_PRIVATE=1 allows local and private networks"
+            "{target} is on this machine or a private network, and a public site sent anyfetch there. \
+             {ALLOW_LOCALHOST}=1 and {ALLOW_PRIVATE}=1 do not allow that. {PUBLIC_TO_PRIVATE}=1 does, \
+             and lets any website make anyfetch read your router and local services"
         ),
     )
 }
 
-/// Refuses a URL whose host requests may not go to.
-fn guard(url: &str, local: bool) -> Result<(), ToolError> {
-    // An address that does not parse fails in the request itself.
-    let Ok(parsed) = Url::parse(url) else {
-        return Ok(());
-    };
-    match parsed.host() {
-        Some(host) if !allowed(host_reach(&host), local) => Err(blocked(url)),
-        _ => Ok(()),
+/// The rules of one client, and where its current request comes from.
+struct Scope {
+    rules: Rules,
+    origin: StdMutex<Origin>,
+    /// Names that resolved to an address on this machine or a private network, and the most
+    /// restricted reach of their addresses. A pooled connection skips `Resolver`, so these count.
+    private_names: StdMutex<HashMap<String, Reach>>,
+}
+
+impl Scope {
+    fn new(rules: Rules) -> Self {
+        Self {
+            rules,
+            origin: StdMutex::new(Origin::Agent),
+            private_names: StdMutex::default(),
+        }
+    }
+
+    /// Where `host` leads: by itself, or by the addresses its name resolved to for this client.
+    fn reach(&self, host: &Host<&str>) -> Reach {
+        let own = host_reach(host);
+        let Host::Domain(domain) = host else {
+            return own;
+        };
+        let names = self.private_names.lock().expect("names lock");
+        names
+            .get(&name_key(domain))
+            .map_or(own, |&resolved| own.max(resolved))
+    }
+
+    fn origin(&self) -> Origin {
+        *self.origin.lock().expect("origin lock")
+    }
+
+    /// A request that anyfetch makes for the agent: refuses `url` by its host.
+    fn begin(&self, url: &str) -> Result<(), ToolError> {
+        *self.origin.lock().expect("origin lock") = Origin::Agent;
+        self.check(url)
+    }
+
+    /// The page at `from` sends the next request to `to`, by a redirect or a bot check.
+    fn hop(&self, from: &str, to: &str) -> Result<(), ToolError> {
+        let origin = if self.leads_private(from) {
+            Origin::Private
+        } else {
+            Origin::Public
+        };
+        *self.origin.lock().expect("origin lock") = origin;
+        self.check(to)
+    }
+
+    fn check(&self, url: &str) -> Result<(), ToolError> {
+        // An address that does not parse fails in the request itself.
+        let Ok(parsed) = Url::parse(url) else {
+            return Ok(());
+        };
+        match parsed.host() {
+            Some(host) => self.rules.admit(self.origin(), self.reach(&host), url),
+            None => Ok(()),
+        }
+    }
+
+    /// Whether the page at `url` is on this machine or a private network.
+    fn leads_private(&self, url: &str) -> bool {
+        let Ok(parsed) = Url::parse(url) else {
+            return false;
+        };
+        parsed.host().is_some_and(|host| off_web(self.reach(&host)))
+    }
+
+    /// Refuses the addresses of `name` that the current request may not go to, and remembers a
+    /// name that leads to this machine or a private network.
+    fn resolved(&self, name: &str, addresses: &[SocketAddr]) -> Result<(), ToolError> {
+        let origin = self.origin();
+        let mut worst = Reach::Public;
+        for address in addresses {
+            let reach = ip_reach(address.ip());
+            worst = worst.max(reach);
+            self.rules.admit(origin, reach, name)?;
+        }
+        if off_web(worst) {
+            let mut names = self.private_names.lock().expect("names lock");
+            names.insert(name_key(name), worst);
+        }
+        Ok(())
     }
 }
 
-/// Resolves names with the system and refuses the addresses that `guard` refuses, so a public
-/// name that points at this machine or its network is caught too.
-struct Resolver {
-    local: bool,
+/// This machine or a private network.
+fn off_web(reach: Reach) -> bool {
+    matches!(reach, Reach::Loopback | Reach::Private)
 }
+
+fn name_key(name: &str) -> String {
+    name.trim_end_matches('.').to_ascii_lowercase()
+}
+
+/// Resolves names with the system and refuses the addresses that `Scope` refuses, so a public
+/// name that points at this machine or its network is caught too.
+struct Resolver(Arc<Scope>);
 
 impl Resolve for Resolver {
     fn resolve(&self, name: Name) -> Resolving {
-        Box::pin(lookup(name, self.local))
+        Box::pin(lookup(name, Arc::clone(&self.0)))
     }
 }
 
-async fn lookup(name: Name, local: bool) -> Result<Addrs, Box<dyn Error + Send + Sync>> {
+async fn lookup(name: Name, scope: Arc<Scope>) -> Result<Addrs, Box<dyn Error + Send + Sync>> {
     let addresses: Vec<_> = tokio::net::lookup_host((name.as_str(), 0)).await?.collect();
-    if addresses
-        .iter()
-        .any(|address| !allowed(ip_reach(address.ip()), local))
-    {
-        return Err(blocked(name.as_str()).into());
-    }
+    scope.resolved(name.as_str(), &addresses)?;
     Ok(Box::new(addresses.into_iter()))
 }
 
-/// `public_site`, and every address of the name is public, even with `ANYFETCH_ALLOW_PRIVATE=1`.
-/// For programs that run page scripts and make their own requests, so skip `Resolver`.
-pub(crate) async fn resolves_public(url: &str) -> bool {
-    if !public_site(url) {
-        return false;
+/// Where `url` leads: by its host, then by every address of its name. A name that does not
+/// resolve, or that names a machine on the local network, leads there. `None` without a host.
+async fn url_reach(url: &Url) -> Option<Reach> {
+    let host = url.host()?;
+    let reach = host_reach(&host);
+    let Host::Domain(domain) = host else {
+        return Some(reach);
+    };
+    if reach != Reach::Public {
+        return Some(reach);
     }
-    let Ok(parsed) = Url::parse(url) else {
-        return false;
+    if local_name(domain) {
+        return Some(Reach::Private);
+    }
+    let addresses: Vec<_> = match tokio::net::lookup_host((domain, 0)).await {
+        Ok(addresses) => addresses.collect(),
+        Err(_) => Vec::new(),
     };
-    // `public_site` has checked an address host already.
-    let Some(Host::Domain(domain)) = parsed.host() else {
-        return true;
-    };
-    match tokio::net::lookup_host((domain, 0)).await {
-        Ok(mut addresses) => addresses.all(|address| ip_reach(address.ip()) == Reach::Public),
+    if addresses.is_empty() {
+        return Some(Reach::Private);
+    }
+    addresses.iter().map(|address| ip_reach(address.ip())).max()
+}
+
+/// `public_site`, and every address of the name is public, even with `ANYFETCH_ALLOW_PRIVATE=1`.
+/// For the Cloudflare browser, which makes its own requests, so skips `Resolver`.
+pub(crate) async fn resolves_public(url: &str) -> bool {
+    match Url::parse(url) {
+        Ok(parsed) => url_reach(&parsed).await == Some(Reach::Public),
         Err(_) => false,
     }
+}
+
+/// A page at `start` counts as public unless it leads to this machine or a private network.
+async fn origin_of(start: &str) -> Origin {
+    let reach = match Url::parse(start) {
+        Ok(parsed) => url_reach(&parsed).await,
+        Err(_) => None,
+    };
+    if reach.is_some_and(off_web) {
+        Origin::Private
+    } else {
+        Origin::Public
+    }
+}
+
+/// Whether the renderer or the browser, which make their own requests and skip `Resolver`, may
+/// open `url` for a fetch that the agent started at `start`. The rules of redirects apply: a
+/// page off the public web needs the setting that allows it, and a `start` off the public web.
+pub(crate) async fn may_open(start: &str, url: &str) -> bool {
+    let web = Url::parse(url).is_ok_and(|parsed| matches!(parsed.scheme(), "http" | "https"));
+    web && judge(Rules::from_env(false), start, url).await.is_ok()
+}
+
+/// Refuses the page that the browser ended on, for a fetch that the agent started at `start`,
+/// when the rules of redirects would not let anyfetch go there. A page that is not on the
+/// network, such as `about:blank`, passes.
+pub(crate) async fn check_landing(start: &str, landed: &str) -> Result<(), ToolError> {
+    judge(Rules::from_env(false), start, landed).await
+}
+
+async fn judge(rules: Rules, start: &str, url: &str) -> Result<(), ToolError> {
+    let Ok(mut parsed) = Url::parse(url) else {
+        return Ok(());
+    };
+    // `blob:https://host/id` belongs to the page at its inner address.
+    if parsed.scheme() == "blob"
+        && let Ok(inner) = Url::parse(parsed.path())
+    {
+        parsed = inner;
+    }
+    if !matches!(parsed.scheme(), "http" | "https" | "ws" | "wss") {
+        return Ok(());
+    }
+    let reach = url_reach(&parsed).await.unwrap_or(Reach::Private);
+    rules.admit(origin_of(start).await, reach, url)
 }
 
 /// Optional HTTP proxy from `~/.config/anyfetch/proxy`: one `host:port:username:password` line.
@@ -309,8 +522,8 @@ pub(crate) async fn get(url: &str, accept: fn(&str) -> bool) -> Result<Body, Too
 /// or its network. Link-local and metadata addresses stay refused.
 pub(crate) async fn get_local(url: &str, accept: fn(&str) -> bool) -> Result<Body, ToolError> {
     routed(|direct| async move {
-        let (client, jar) = client(IDENTITIES[0], None, direct, true)?;
-        open(&client, &jar, url, accept, None, true).await
+        let (client, jar, scope) = client(IDENTITIES[0], None, direct, true)?;
+        open(&client, &jar, &scope, url, accept, None).await
     })
     .await
 }
@@ -324,11 +537,11 @@ pub(crate) async fn get_with(
     entry: Option<&str>,
 ) -> Result<Body, ToolError> {
     routed(|direct| async move {
-        let (client, jar) = client(IDENTITIES[0], None, direct, false)?;
+        let (client, jar, scope) = client(IDENTITIES[0], None, direct, false)?;
         if let Some(entry) = entry {
-            open(&client, &jar, entry, |_| true, None, false).await?;
+            open(&client, &jar, &scope, entry, |_| true, None).await?;
         }
-        guard(url, false)?;
+        scope.begin(url)?;
         let mut request = client.get(url);
         for (name, value) in headers {
             request = request.header(*name, *value);
@@ -422,15 +635,14 @@ pub(crate) fn public_site(url: &str) -> bool {
     let Some(host) = url.host() else {
         return false;
     };
-    let local_name = match &host {
-        Host::Domain(domain) => {
-            let name = domain.trim_end_matches('.');
-            // A name without a dot is a machine on the local network.
-            !name.contains('.') || name.ends_with(".local") || name.ends_with(".internal")
-        }
-        _ => false,
-    };
-    !local_name && host_reach(&host) == Reach::Public
+    let named_local = matches!(&host, Host::Domain(domain) if local_name(domain));
+    !named_local && host_reach(&host) == Reach::Public
+}
+
+/// A name of a machine on the local network: one without a dot, or under `.local` or `.internal`.
+fn local_name(domain: &str) -> bool {
+    let name = domain.trim_end_matches('.');
+    !name.contains('.') || name.ends_with(".local") || name.ends_with(".internal")
 }
 
 async fn attempt(
@@ -441,9 +653,9 @@ async fn attempt(
     direct: bool,
 ) -> Result<Body, ToolError> {
     let cleared_for = cleared.map(|clearance| (clearance, url));
-    let (client, jar) = client(identity, cleared_for, direct, false)?;
+    let (client, jar, scope) = client(identity, cleared_for, direct, false)?;
     let agent = cleared.map(|clearance| clearance.user_agent.as_str());
-    open(&client, &jar, url, accept, agent, false).await
+    open(&client, &jar, &scope, url, accept, agent).await
 }
 
 /// What a page asks a browser to do before it shows its content.
@@ -460,16 +672,16 @@ enum Check {
 async fn open(
     client: &Client,
     jar: &Jar,
+    scope: &Scope,
     url: &str,
     accept: fn(&str) -> bool,
     agent: Option<&str>,
-    local: bool,
 ) -> Result<Body, ToolError> {
     let get = |target: &str| match agent {
         Some(agent) => client.get(target).header("user-agent", agent),
         None => client.get(target),
     };
-    guard(url, local)?;
+    scope.begin(url)?;
     let (body, check) = read(get(url).send().await?, false, accept).await?;
     let next = match check {
         None => return Ok(body),
@@ -485,7 +697,8 @@ async fn open(
             page.into()
         }
     };
-    guard(&next, local)?;
+    // The page asks for the next request, as a redirect would.
+    scope.hop(&body.url, &next)?;
     let response = get(&next)
         .header("referer", &body.url)
         .send()
@@ -650,19 +863,20 @@ mod tests {
             ("http://8.8.8.8/", Reach::Public),
             ("http://100.128.0.1/", Reach::Public),
             ("http://[2606:4700::1111]/", Reach::Public),
-            ("http://localhost/", Reach::Private),
-            ("http://localhost./", Reach::Private),
-            ("http://app.localhost/", Reach::Private),
-            ("http://127.0.0.1/", Reach::Private),
+            ("http://localhost/", Reach::Loopback),
+            ("http://localhost./", Reach::Loopback),
+            ("http://app.localhost/", Reach::Loopback),
+            ("http://127.0.0.1/", Reach::Loopback),
+            ("http://127.8.0.1/", Reach::Loopback),
             ("http://10.1.2.3/", Reach::Private),
             ("http://172.16.0.1/", Reach::Private),
             ("http://192.168.1.1/", Reach::Private),
             ("http://100.64.0.1/", Reach::Private),
-            ("http://0.0.0.0/", Reach::Private),
-            ("http://[::]/", Reach::Private),
-            ("http://[::1]/", Reach::Private),
+            ("http://0.0.0.0/", Reach::Loopback),
+            ("http://[::]/", Reach::Loopback),
+            ("http://[::1]/", Reach::Loopback),
             ("http://[fd12::1]/", Reach::Private),
-            ("http://[::ffff:127.0.0.1]/", Reach::Private),
+            ("http://[::ffff:127.0.0.1]/", Reach::Loopback),
             ("http://169.254.169.254/", Reach::Blocked),
             ("http://[::ffff:169.254.169.254]/", Reach::Blocked),
             ("http://[fe80::1]/", Reach::Blocked),
@@ -680,17 +894,198 @@ mod tests {
         }
     }
 
+    const LOCALHOST: Rules = Rules {
+        localhost: true,
+        private: false,
+        public_to_private: false,
+    };
+    const PRIVATE: Rules = Rules {
+        localhost: false,
+        private: true,
+        public_to_private: false,
+    };
+    const DANGEROUS: Rules = Rules {
+        localhost: false,
+        private: true,
+        public_to_private: true,
+    };
+
+    fn admits(rules: Rules, origin: Origin, reach: Reach) -> bool {
+        rules.admit(origin, reach, "http://target/").is_ok()
+    }
+
     #[test]
-    fn local_allows_private_but_never_blocked() {
-        assert!(allowed(Reach::Private, true));
-        assert!(!allowed(Reach::Blocked, true));
+    fn the_agent_reaches_what_the_settings_allow() {
+        use {Origin::Agent, Reach::*};
+        let none = Rules::default();
+        assert!(admits(none, Agent, Public));
+        assert!(!admits(none, Agent, Loopback) && !admits(none, Agent, Private));
+        // ANYFETCH_ALLOW_LOCALHOST: this machine, not the network.
+        assert!(admits(LOCALHOST, Agent, Loopback));
+        assert!(!admits(LOCALHOST, Agent, Private));
+        assert!(admits(PRIVATE, Agent, Loopback) && admits(PRIVATE, Agent, Private));
+        for rules in [none, LOCALHOST, PRIVATE, DANGEROUS] {
+            assert!(!admits(rules, Agent, Blocked));
+            assert!(!admits(rules, Origin::Private, Blocked));
+            assert!(!admits(rules, Origin::Public, Blocked));
+        }
+    }
+
+    #[test]
+    fn a_public_site_may_not_redirect_off_the_web_without_the_dangerous_setting() {
+        use Reach::*;
+        for rules in [Rules::default(), LOCALHOST, PRIVATE] {
+            assert!(admits(rules, Origin::Public, Public));
+            for reach in [Loopback, Private] {
+                let error = rules
+                    .admit(Origin::Public, reach, "http://target/")
+                    .unwrap_err();
+                assert_eq!(error.code, "blocked_address");
+                assert!(
+                    error.message.contains(PUBLIC_TO_PRIVATE),
+                    "{}",
+                    error.message
+                );
+            }
+        }
+        assert!(admits(DANGEROUS, Origin::Public, Loopback));
+        assert!(admits(DANGEROUS, Origin::Public, Private));
+        assert!(admits(DANGEROUS, Origin::Agent, Private));
+    }
+
+    #[test]
+    fn pages_off_the_web_redirect_within_what_is_allowed() {
+        use {Origin::Private as Off, Reach::*};
+        assert!(admits(PRIVATE, Off, Private) && admits(PRIVATE, Off, Loopback));
+        assert!(admits(PRIVATE, Off, Public));
+        assert!(admits(LOCALHOST, Off, Loopback));
+        let error = LOCALHOST
+            .admit(Off, Private, "http://192.168.1.1/")
+            .unwrap_err();
+        assert!(error.message.contains(ALLOW_PRIVATE), "{}", error.message);
+        let error = Rules::default().admit(Origin::Agent, Loopback, "http://127.0.0.1/");
+        assert!(error.unwrap_err().message.contains(ALLOW_LOCALHOST));
+    }
+
+    #[test]
+    fn redirects_are_judged_by_the_page_that_sends_them() {
+        let scope = Scope::new(PRIVATE);
+        assert!(scope.begin("http://192.168.1.1/").is_ok());
+        assert!(scope.hop("http://192.168.1.1/", "http://10.0.0.2/").is_ok());
+        assert!(
+            scope
+                .hop("http://10.0.0.2/", "https://example.com/")
+                .is_ok()
+        );
+        // The public page sends anyfetch back into the network.
+        assert!(
+            scope
+                .hop("https://example.com/", "http://10.0.0.2/")
+                .is_err()
+        );
+        assert!(scope.begin("http://169.254.169.254/").is_err());
+
+        let scope = Scope::new(LOCALHOST);
+        assert!(scope.begin("http://127.0.0.1:3000/").is_ok());
+        assert!(
+            scope
+                .hop("http://127.0.0.1:3000/", "http://localhost:3000/")
+                .is_ok()
+        );
+        assert!(
+            scope
+                .hop("http://localhost:3000/", "http://192.168.1.1/")
+                .is_err()
+        );
+        assert!(scope.begin("http://192.168.1.1/").is_err());
+        assert!(
+            scope
+                .hop("https://example.com/", "http://127.0.0.1/")
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn a_name_that_resolved_off_the_web_counts_as_a_page_there() {
+        let scope = Scope::new(PRIVATE);
+        let lan: SocketAddr = "192.168.1.5:0".parse().unwrap();
+        let public: SocketAddr = "93.184.216.34:0".parse().unwrap();
+        scope.begin("http://router.example/").unwrap();
+        assert!(scope.resolved("Router.Example.", &[lan]).is_ok());
+        assert!(
+            scope
+                .hop("http://router.example/", "http://10.0.0.2/")
+                .is_ok()
+        );
+        // Back from a public page over a pooled connection, which does not resolve again.
+        assert!(
+            scope
+                .hop("https://sso.example/", "http://router.example/x")
+                .is_err()
+        );
+        // A public page whose redirect target resolves into the network.
+        scope
+            .hop("https://example.com/", "https://nas.example/")
+            .unwrap();
+        assert!(scope.resolved("nas.example", &[lan]).is_err());
+        assert!(scope.resolved("other.example", &[public]).is_ok());
+        let scope = Scope::new(Rules::default());
+        scope.begin("https://nas.example/").unwrap();
+        assert!(scope.resolved("nas.example", &[lan]).is_err());
+    }
+
+    #[tokio::test]
+    async fn local_names_and_addresses_count_as_off_the_web() {
+        for (url, reach) in [
+            ("http://127.0.0.1:3000/", Reach::Loopback),
+            ("http://localhost/", Reach::Loopback),
+            ("http://intranet/", Reach::Private),
+            ("http://printer.local/", Reach::Private),
+            ("http://192.168.1.1/", Reach::Private),
+            ("http://169.254.169.254/", Reach::Blocked),
+            ("http://93.184.216.34/", Reach::Public),
+        ] {
+            let parsed = Url::parse(url).unwrap();
+            assert_eq!(url_reach(&parsed).await, Some(reach), "{url}");
+        }
+        assert_eq!(origin_of("http://10.0.0.1/").await, Origin::Private);
+        assert_eq!(origin_of("http://93.184.216.34/").await, Origin::Public);
+    }
+
+    #[tokio::test]
+    async fn the_browser_opens_and_ends_where_a_redirect_could_go() {
+        let local = "http://127.0.0.1:3000/app";
+        assert!(judge(LOCALHOST, local, local).await.is_ok());
+        assert!(judge(Rules::default(), local, local).await.is_err());
+        assert!(
+            judge(LOCALHOST, local, "http://192.168.1.1/")
+                .await
+                .is_err()
+        );
+        assert!(
+            judge(PRIVATE, "http://10.0.0.1/", "http://10.0.0.2/")
+                .await
+                .is_ok()
+        );
+        // A public page that navigated into the network.
+        let public = "http://93.184.216.34/";
+        assert!(judge(PRIVATE, public, "http://10.0.0.2/").await.is_err());
+        assert!(judge(DANGEROUS, public, "http://10.0.0.2/").await.is_ok());
+        assert!(judge(Rules::default(), public, "about:blank").await.is_ok());
+        let blob = "blob:http://192.168.1.1/0b1c";
+        assert!(judge(PRIVATE, public, blob).await.is_err());
+        assert!(
+            judge(DANGEROUS, public, "http://169.254.169.254/")
+                .await
+                .is_err()
+        );
     }
 
     struct Refuses;
 
     impl Resolve for Refuses {
         fn resolve(&self, name: Name) -> Resolving {
-            Box::pin(async move { Err(blocked(name.as_str()).into()) })
+            Box::pin(async move { Err(blocked(name.as_str(), Reach::Private).into()) })
         }
     }
 
