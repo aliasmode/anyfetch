@@ -2,7 +2,7 @@
 
 **Web search and web fetch for AI agents. One small binary, no API keys, and it reads the sites that refuse your agent.**
 
-Free and open source, from the makers of [AliasMode](https://aliasmode.com/).
+Free and open source, from the makers of [AliasMode](https://aliasmode.com/), the free, open-source antidetect browser.
 
 Agent harnesses fetch pages with a bot identity, and a large part of the web answers `403`. Anyfetch sends the request a real browser sends, so your agent gets the page.
 
