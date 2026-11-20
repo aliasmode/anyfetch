@@ -12,15 +12,33 @@ use std::{
 };
 
 /// Where to save: a file path, or `true` for a name under `.anyfetch/`.
-#[derive(Clone, Debug, Deserialize)]
-#[serde(untagged)]
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[serde(from = "OutRepr")]
 pub enum Out {
     Auto(bool),
     Path(String),
 }
 
-// Out and Preview have hand-written schemas: the derived ones are an `anyOf` with no top-level
-// `type`, which agent harnesses show as "unknown".
+/// How `out` is written: a JSON boolean, or a string that is `true`, `false` or a path.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum OutRepr {
+    Flag(bool),
+    Text(String),
+}
+
+impl From<OutRepr> for Out {
+    fn from(repr: OutRepr) -> Self {
+        match repr {
+            OutRepr::Flag(flag) => Self::Auto(flag),
+            OutRepr::Text(text) => text.parse().unwrap_or_else(|never| match never {}),
+        }
+    }
+}
+
+// Out and Preview have hand-written schemas with one `type` each. A derived `anyOf` shows as
+// "unknown" in agent harnesses, and a `type` array is refused by some clients (Gemini's
+// OpenAPI subset). Both still accept their JSON forms besides the string.
 impl schemars::JsonSchema for Out {
     fn schema_name() -> std::borrow::Cow<'static, str> {
         "Out".into()
@@ -31,7 +49,7 @@ impl schemars::JsonSchema for Out {
     }
 
     fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
-        schemars::json_schema!({ "type": ["boolean", "string"] })
+        schemars::json_schema!({ "type": "string" })
     }
 }
 
@@ -45,12 +63,7 @@ impl schemars::JsonSchema for Preview {
     }
 
     fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
-        schemars::json_schema!({
-            "type": ["boolean", "integer", "array"],
-            "items": { "type": "integer" },
-            "minItems": 2,
-            "maxItems": 2,
-        })
+        schemars::json_schema!({ "type": "string" })
     }
 }
 
@@ -68,7 +81,7 @@ impl std::str::FromStr for Out {
 
 /// Which lines of the saved content the answer keeps.
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
-#[serde(untagged)]
+#[serde(try_from = "PreviewRepr")]
 pub enum Preview {
     /// `true`: the first 20 lines. `false`: none.
     Show(bool),
@@ -76,6 +89,29 @@ pub enum Preview {
     Lines(i64),
     /// [start, count]: `count` lines from line `start` (1-based). [40, 20] is lines 40-59.
     Range([i64; 2]),
+}
+
+/// How `preview` is written: a string as for [`Preview::from_str`], or the JSON forms.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum PreviewRepr {
+    Show(bool),
+    Lines(i64),
+    Range([i64; 2]),
+    Text(String),
+}
+
+impl TryFrom<PreviewRepr> for Preview {
+    type Error = String;
+
+    fn try_from(repr: PreviewRepr) -> Result<Self, String> {
+        Ok(match repr {
+            PreviewRepr::Show(show) => Self::Show(show),
+            PreviewRepr::Lines(lines) => Self::Lines(lines),
+            PreviewRepr::Range(range) => Self::Range(range),
+            PreviewRepr::Text(text) => text.parse()?,
+        })
+    }
 }
 
 impl Default for Preview {
@@ -699,6 +735,20 @@ mod tests {
         assert_eq!(parsed, Preview::Range([40, 60]));
         let parsed: Preview = serde_json::from_value(json!(-5)).unwrap();
         assert_eq!(parsed, Preview::Lines(-5));
+        let parsed: Preview = serde_json::from_value(json!("40:20")).unwrap();
+        assert_eq!(parsed, Preview::Range([40, 20]));
+        let parsed: Preview = serde_json::from_value(json!("false")).unwrap();
+        assert_eq!(parsed, Preview::Show(false));
+        assert!(serde_json::from_value::<Preview>(json!("ten")).is_err());
+    }
+
+    #[test]
+    fn reads_out_as_a_flag_or_a_path() {
+        let parse = |value| serde_json::from_value::<Out>(value).unwrap();
+        assert_eq!(parse(json!(true)), Out::Auto(true));
+        assert_eq!(parse(json!("true")), Out::Auto(true));
+        assert_eq!(parse(json!("false")), Out::Auto(false));
+        assert_eq!(parse(json!("notes/a.md")), Out::Path("notes/a.md".into()));
     }
 
     #[test]

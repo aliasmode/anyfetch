@@ -105,8 +105,9 @@ pub enum Render {
     Off,
 }
 
-/// Written by hand: the derived schema of `RenderRepr` is an `anyOf` with no top-level
-/// `type`, which agent harnesses show as "unknown".
+/// Written by hand with one `type`: the derived schema of `RenderRepr` is an `anyOf`, which
+/// agent harnesses show as "unknown", and a `type` array is refused by some clients. JSON
+/// booleans are still accepted.
 impl schemars::JsonSchema for Render {
     fn schema_name() -> std::borrow::Cow<'static, str> {
         "Render".into()
@@ -118,8 +119,8 @@ impl schemars::JsonSchema for Render {
 
     fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
         schemars::json_schema!({
-            "type": ["boolean", "string"],
-            "enum": [true, false, "auto"],
+            "type": "string",
+            "enum": ["auto", "true", "false"],
         })
     }
 }

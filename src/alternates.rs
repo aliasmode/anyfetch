@@ -1190,9 +1190,9 @@ mod tests {
         assert_eq!(page.title, "Ada Lovelace | LinkedIn");
         assert_eq!(
             page.content,
-            "Mathematician\n\nLondon · 9 followers · Analytical Engines\n\n## About\n\nI write programs\\.\n\n## Experience\n\n\
-             - **Analyst**, Analytical Engines\n  1842 - 1843\n  The first program\\.\n  \
-             - [C\\. B\\.](https://uk.linkedin.com/in/cb)\n\n\
+            "Mathematician\n\nLondon · 9 followers · Analytical Engines\n\n## About\n\nI write programs.\n\n## Experience\n\n\
+             - **Analyst**, Analytical Engines\n  1842 - 1843\n  The first program.\n  \
+             - [C. B.](https://uk.linkedin.com/in/cb)\n\n\
              ## Skills\n\n- Mathematics\n\n\
              ## Articles\n\n- [Notes](https://www.linkedin.com/pulse/notes), 2026-01-02, 7 likes\n\n\
              ## Posts\n\n- Ada Lovelace, 2026-02-03: First program https://www.linkedin.com/posts/ada_1"

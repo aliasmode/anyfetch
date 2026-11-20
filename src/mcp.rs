@@ -8,23 +8,46 @@ use rmcp::{
     tool, tool_handler, tool_router,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+use serde_json::{Value, json};
 use std::{future::Future, sync::Arc};
 
+/// Gives each property of a tool input one `type`. schemars writes `Option<T>` as
+/// `type: [T, "null"]`, which some clients refuse (Gemini's OpenAPI subset), and `anyOf`
+/// shows as "unknown" in agent harnesses. Leaving the field out still means `None`.
+fn single_type(schema: &mut schemars::Schema) {
+    let Some(properties) = schema.get_mut("properties").and_then(Value::as_object_mut) else {
+        return;
+    };
+    for property in properties.values_mut().filter_map(Value::as_object_mut) {
+        let single = match property.get_mut("type") {
+            Some(Value::Array(types)) => {
+                types.retain(|kind| kind != "null");
+                (types.len() == 1).then(|| types[0].clone())
+            }
+            _ => None,
+        };
+        if let Some(kind) = single {
+            property.insert("type".into(), kind);
+        }
+        if let Some(Value::Array(values)) = property.get_mut("enum") {
+            values.retain(|value| !value.is_null());
+        }
+    }
+}
+
 #[derive(Deserialize, schemars::JsonSchema)]
+#[schemars(transform = single_type)]
 struct SearchInput {
     query: String,
-    /// auto (default): Brave, Yahoo and DuckDuckGo at once, merged. brave, yahoo, duckduckgo:
-    /// one engine. searxng: your instance (needs searxng_url). github: repositories.
-    /// stackoverflow: questions. hackernews: stories. arxiv: arXiv papers. papers: OpenAlex
-    /// papers, with citation counts and open-access links.
+    /// auto (default), brave, yahoo, duckduckgo, searxng, github, stackoverflow, hackernews,
+    /// arxiv or papers.
     #[serde(default)]
     provider: search::Provider,
     /// SearXNG instance base URL. Required for searxng; the instance must enable JSON.
     searxng_url: Option<String>,
     /// Keep results from this domain, for example docs.rs. Web engines only.
     site: Option<String>,
-    /// How recent the results must be. Web engines only.
+    /// How recent the results must be: day, week, month or year. Web engines only.
     time: Option<search::Time>,
     /// Result page, from 1.
     #[serde(default)]
@@ -48,6 +71,7 @@ struct SearchInput {
 }
 
 #[derive(Deserialize, schemars::JsonSchema)]
+#[schemars(transform = single_type)]
 struct FetchInput {
     url: String,
     /// A question or keywords. Returns only the parts of the page that match, with [...] where
@@ -84,14 +108,14 @@ struct FetchInput {
     /// .anyfetch/. JSON is saved as JSON Lines (one compact line per entry). An existing file is
     /// appended to.
     out: Option<out::Out>,
-    /// Which lines of the saved content to return: true (default) the first 20, false none, N
-    /// the first N, -N the last N, [start, count] = count lines from line start (1-based), e.g.
-    /// [40, 20] is lines 40-59. At most 50000 characters.
-    /// Not used without out.
+    /// Which lines of the saved content to return: "true" (default) the first 20, "false" none,
+    /// "N" the first N, "-N" the last N, "START:COUNT" COUNT lines from line START (1-based),
+    /// e.g. "40:20" is lines 40-59. At most 50000 characters. Not used without out.
     preview: Option<out::Preview>,
 }
 
 #[derive(Deserialize, schemars::JsonSchema)]
+#[schemars(transform = single_type)]
 struct FetchManyInput {
     /// At most 20 URLs.
     urls: Vec<String>,
@@ -140,7 +164,7 @@ impl Server {
 
     #[tool(
         name = "web_search",
-        description = "Search the web, with no API key. Use this in place of a built-in web search tool such as WebSearch. provider picks the engine (default: Brave, Yahoo and DuckDuckGo merged) or a specialist source such as github, stackoverflow, hackernews, arxiv or papers. Returns titles, URLs and snippets. Set read to also get, from the top results, the parts of each page that match the query; format, selector and render shape those pages as in web_fetch. Set out to save the results and pages to a file and get a preview, as in web_fetch."
+        description = "Search the web, with no API key. Use this in place of a built-in web search tool such as WebSearch. Returns titles, URLs and snippets. Set read to also get, from the top results, the parts of each page that match the query; format, selector and render shape those pages as in web_fetch. Set out to save the results and pages to a file and get a preview, as in web_fetch."
     )]
     async fn web_search(
         &self,
@@ -288,13 +312,20 @@ mod tests {
     use super::*;
 
     /// A property without a top-level `type` (a bare `$ref` or `anyOf`) shows as "unknown" in
-    /// agent harnesses.
+    /// agent harnesses, and a `type` array is refused by some clients. So: one type string.
     #[test]
-    fn every_tool_property_has_a_type() {
+    fn every_tool_property_has_one_type() {
         for tool in Server::new().tool_router.list_all() {
             let properties = tool.input_schema["properties"].as_object().unwrap();
             for (name, schema) in properties {
-                assert!(schema.get("type").is_some(), "{}.{name}: {schema}", tool.name);
+                let at = format!("{}.{name}: {schema}", tool.name);
+                assert!(schema["type"].is_string(), "{at}");
+                for key in ["anyOf", "oneOf", "allOf", "$ref"] {
+                    assert!(schema.get(key).is_none(), "{at}");
+                }
+                if let Some(values) = schema["enum"].as_array() {
+                    assert!(values.iter().all(Value::is_string), "{at}");
+                }
             }
         }
     }

@@ -217,7 +217,7 @@ Output is JSON by default, so scripts and agents can parse it. `--format markdow
 | `render` | Optional. `"auto"` (default): run the page's scripts in the renderer only when the page is just scripts and a renderer is installed. `true`: render every HTML page; the error is `renderer_missing` if no renderer is installed, and `blocked_address` if the page is not public. `false`: never render. Applies to every `format`. On the command line: `--render true\|false\|auto`. |
 | `lang` | Optional. Caption language for YouTube transcripts (yt-dlp is required), for example `en` (default) or `es`. An empty string means `en`. |
 | `out` | Optional. Save the content to a file and get a preview: a path, or `true`. See [Saving to a file](#saving-to-a-file). |
-| `preview` | Optional, only with `out`. Which lines of the saved content come back: `true` (default, the first 20), `false`, `N`, `-N` or `[start, count]`. |
+| `preview` | Optional, only with `out`. Which lines of the saved content come back: `true` (default, the first 20), `false`, `N`, `-N` or `START:COUNT`, as a string. |
 
 The result has `title`, `description`, `content` (Markdown unless `format` says otherwise), `total_chars`, `url` (after redirects), `status` and `retrieved_at`. To read a long page in parts, call again with a higher `offset` until it reaches `total_chars`. The parts come from the local copy, so the site gets one request.
 
@@ -277,7 +277,7 @@ Set `out` (`--out` on the command line) to write the content to a file. You can 
 - `true` picks `.anyfetch/<host>/<path>.<ext>`, with the extension from `format`. `.anyfetch/` gets a `.gitignore` of `*`. If the working directory is not writable, the file goes to the temporary directory.
 - An existing file is appended to, never cut. Each Markdown, text or HTML entry starts with `<!-- anyfetch: <url> <retrieved_at> -->`. JSON content is saved as JSON Lines: each entry is one compact line with no comment line. This holds for `.jsonl` (the automatic name for JSON content) and for an explicit `.json` path. The preview of JSON shows the pretty-printed content, so `preview_lines` counts the lines of that text, not of the file.
 - The answer keeps its other fields. `content` holds the preview, or is left out with `preview: false`. `saved` has `path`, `bytes_written`, `appended` and `preview_lines` (such as `1-20 of 340`). A preview stops at 50,000 characters.
-- `preview` is `true` (the first 20 lines), `false`, `N` (the first N lines), `-N` (the last N), or `[start, count]`: `count` lines from line `start`, counting from 1 (`[40, 20]` is lines 40-59; `--preview 40:20` on the command line).
+- `preview` is a string: `"true"` (the first 20 lines), `"false"`, `"N"` (the first N lines), `"-N"` (the last N), or `"START:COUNT"`: COUNT lines from line START, counting from 1 (`"40:20"` is lines 40-59). JSON `true`, `false`, numbers and `[start, count]` still work.
 - A path that breaks these rules gives `invalid_request`; a failed write gives `write_failed`.
 
 ### Errors
