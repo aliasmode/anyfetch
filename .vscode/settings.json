@@ -1,0 +1,4 @@
+{
+  "explorer.fileNesting.enabled": true,
+  "explorer.fileNesting.patterns": { "*.rs": "${capture}.test.rs" }
+}

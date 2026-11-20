@@ -1,7 +1,7 @@
 [package]
 name = "anyfetch"
 # "${upstream version}-${my variant}.${# commits ahead of upstream}
-version = "0.8.4-dzmba.15"
+version = "0.8.4-dzmba.17"
 edition = "2024"
 rust-version = "1.98"
 license = "Apache-2.0"
