@@ -1,4 +1,4 @@
-use crate::{ToolError, alternates, cache, focus, pdf, playwright, render, transport};
+use crate::{ToolError, alternates, cache, chromium, focus, pdf, render, transport};
 use clap::ValueEnum;
 use dom_query::{Document, Matcher, NodeRef};
 use dom_smoothie::Readability;
@@ -182,9 +182,9 @@ pub struct Options<'a> {
     /// A program that runs a page's scripts and prints the finished HTML, for pages that hold
     /// no text without them. See [`crate::render::renderer`].
     pub renderer: Option<&'a Path>,
-    /// A Chromium-based browser through Playwright: runs scripts when `renderer` is missing or
-    /// fails, and reads pages that refuse plain requests. See [`crate::playwright`].
-    pub playwright: bool,
+    /// A Chromium-based browser: runs scripts when `renderer` is missing or fails, and reads
+    /// pages that refuse plain requests. See [`crate::chromium`].
+    pub chromium: bool,
     /// yt-dlp, which YouTube transcripts need.
     pub yt_dlp: Option<&'a Path>,
     /// Caption language of a YouTube transcript. Default `en`.
@@ -205,7 +205,7 @@ pub struct Options<'a> {
 pub struct Helpers {
     browser: Option<PathBuf>,
     renderer: Option<PathBuf>,
-    playwright: bool,
+    chromium: bool,
     yt_dlp: Option<PathBuf>,
 }
 
@@ -214,7 +214,7 @@ impl Helpers {
         Self {
             browser: crate::clearance::browser(),
             renderer: render::renderer(),
-            playwright: playwright::enabled(),
+            chromium: chromium::enabled(),
             yt_dlp: alternates::yt_dlp(),
         }
     }
@@ -231,7 +231,7 @@ impl Helpers {
         Options {
             browser: self.browser.as_deref(),
             renderer: self.renderer.as_deref(),
-            playwright: self.playwright,
+            chromium: self.chromium,
             yt_dlp: self.yt_dlp.as_deref(),
             lang,
             cache: true,
@@ -359,7 +359,7 @@ async fn download(url: &str, options: Options<'_>) -> Result<FetchResponse, Tool
     let address = address.as_deref().unwrap_or(url);
     let (response, from_browser) =
         match transport::get_page(address, supported, options.browser).await {
-            Err(error) if options.playwright && refused(&error) => {
+            Err(error) if options.chromium && refused(&error) => {
                 (in_browser(address, error).await?, true)
             }
             result => (result?, false),
@@ -402,11 +402,11 @@ async fn download(url: &str, options: Options<'_>) -> Result<FetchResponse, Tool
         let mut body = decode(&bytes, mime.as_ref(), is_html);
         if is_html {
             let forced = options.render == Render::On;
-            let can_render = options.renderer.is_some() || options.playwright;
+            let can_render = options.renderer.is_some() || options.chromium;
             if forced && !can_render {
                 return Err(ToolError::new(
                     "renderer_missing",
-                    "render is true, but no renderer is installed; install Lightpanda, set ANYFETCH_RENDERER, or allow the Playwright fallback",
+                    "render is true, but no renderer is installed; install Lightpanda, set ANYFETCH_RENDERER, or allow the Chromium fallback",
                 ));
             }
             let own = readable
@@ -505,7 +505,7 @@ async fn download(url: &str, options: Options<'_>) -> Result<FetchResponse, Tool
     })
 }
 
-/// The page after its scripts ran: in Lightpanda, then in a browser through Playwright.
+/// The page after its scripts ran: in Lightpanda, then in a Chromium-based browser.
 async fn run_scripts(options: Options<'_>, url: &str) -> Result<Option<String>, ToolError> {
     if let Some(renderer) = options.renderer
         && let Some(html) = render::render(renderer, url).await
@@ -513,11 +513,11 @@ async fn run_scripts(options: Options<'_>, url: &str) -> Result<Option<String>, 
         return Ok(Some(html));
     }
 
-    if !options.playwright {
+    if !options.chromium {
         return Ok(None);
     }
 
-    playwright::render(url).await.map(|page| Some(page.html))
+    chromium::render(url).await.map(|page| Some(page.html))
 }
 
 /// A refusal that a real browser may not get: a bot check, or 401, 403 or 503 to plain requests
@@ -541,7 +541,7 @@ async fn in_browser(url: &str, error: ToolError) -> Result<transport::Body, Tool
         ),
         ..error.clone()
     };
-    match playwright::render(url).await {
+    match chromium::render(url).await {
         Ok(page) if page.status >= 400 => Err(failed(format!("HTTP {}", page.status))),
         Ok(page) => Ok(transport::Body {
             url: page.url,

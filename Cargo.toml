@@ -30,7 +30,7 @@ sha2 = "0.11"
 time = { version = "0.3", features = ["formatting"] }
 tokio = { version = "1", features = ["io-util", "macros", "net", "process", "rt-multi-thread", "sync", "time"] }
 url = "2"
-wreq = { version = "=0.16", features = ["cookies", "charset", "stream", "gzip", "brotli", "deflate", "zstd"] }
+wreq = { version = "=0.16", features = ["cookies", "charset", "stream", "gzip", "brotli", "deflate", "zstd", "ws"] }
 wreq-util = { version = "=0.2", features = ["emulation", "emulation-compression"] }
 
 # The jq child process limits its own memory.
@@ -38,7 +38,7 @@ wreq-util = { version = "=0.2", features = ["emulation", "emulation-compression"
 libc = "0.2"
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading"] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["io-util", "net", "process", "time"] }

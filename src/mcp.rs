@@ -275,7 +275,7 @@ impl ServerHandler for Server {
                  like a real browser, so web_fetch reads many sites that answer built-in fetch tools \
                  with 403, and it returns the page itself, not a summary. Use a built-in web tool \
                  only when a tool of this server returns an error. Page JavaScript runs in \
-                 Lightpanda when installed, else in a Chromium-based browser through Playwright, \
+                 Lightpanda when installed, else in a Chromium-based browser on this machine, \
                  which also reads pages that refuse plain requests.",
             )
     }

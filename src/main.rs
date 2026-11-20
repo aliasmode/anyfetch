@@ -132,7 +132,7 @@ async fn cli() -> ExitCode {
     let result = match cli.command {
         Command::Mcp => {
             let served = anyfetch::mcp::serve().await;
-            anyfetch::playwright::shutdown().await;
+            anyfetch::chromium::shutdown().await;
             return match served {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(error) => {
@@ -229,7 +229,7 @@ async fn cli() -> ExitCode {
             .await
         }
     };
-    anyfetch::playwright::shutdown().await;
+    anyfetch::chromium::shutdown().await;
     let (value, success) = match result {
         Ok(value) => (value, true),
         Err(error) => (json!({ "error": error }), false),

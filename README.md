@@ -36,7 +36,7 @@ Anyfetch picks the browser in this order:
 | `PLAYWRIGHT_MCP_CONFIG=/path/to/playwright.json` | Read `browser.userDataDir`, `browser.cdpEndpoint` and `browser.launchOptions` (`executablePath`, `headless`, `args`) from this file, in the Playwright MCP config format. Optional. |
 | `ANYFETCH_CHROMIUM=off` | Never use the browser fallback. |
 
-When the browser cannot start, the fetch returns `browser_unavailable` and the message lists the steps to fix it. Anyfetch writes the same text to stderr, which MCP clients keep in their server log. A failed start is not tried again for 5 minutes. The browser Anyfetch started closes after 5 minutes without a fetch, and when Anyfetch exits.
+When the browser cannot start, the fetch returns `browser_unavailable` and the message lists the steps to fix it. Anyfetch writes the same text to stderr, which MCP clients keep in their server log. A failed start is not tried again for 5 minutes. The browser Anyfetch started closes after 5 minutes without a fetch, and when Anyfetch exits. If the client kills Anyfetch instead, the browser keeps running; close it yourself.
 
 ### Use a copy of your profile
 
